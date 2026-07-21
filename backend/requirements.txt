@@ -1,0 +1,23 @@
+# ===== Core =====
+fastapi>=0.111,<0.115
+uvicorn[standard]>=0.30,<0.32
+python-multipart>=0.0.9
+
+# ===== Database =====
+sqlalchemy[asyncio]>=2.0,<2.1
+asyncpg>=0.29,<0.31
+alembic>=1.13,<1.15
+pgvector>=0.3,<0.4
+
+# ===== Validation / Settings =====
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+python-dotenv>=1.0,<2
+
+# ===== HTTP / AI SDK =====
+httpx>=0.27,<0.29
+openai>=1.35,<2
+
+# ===== Dev =====
+pytest>=8.2,<9
+pytest-asyncio>=0.23,<0.25

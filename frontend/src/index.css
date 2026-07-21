@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MediUI design tokens as CSS variables */
+:root {
+  --color-primary: #3363ff;
+  --color-primary-hover: #5580ff;
+  --color-primary-active: #1a4fe6;
+  --color-primary-disabled: #99b3ff;
+  --color-primary-light: #e6edff;
+
+  --color-medical-primary: #0891b2;
+  --color-medical-success: #059669;
+  --color-medical-light: #ecfeff;
+
+  --color-success: #67c23a;
+  --color-warning: #e6a23c;
+  --color-error: #f56c6c;
+  --color-info: #909399;
+
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f7f8fa;
+  --color-bg-tertiary: #f0f2f5;
+
+  --radius-card: 12px;
+  --radius-field: 8px;
+
+  --font-sans: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-bg-secondary);
+    color: #1e293b; /* slate-800 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Material Symbols base */
+  .material-symbols-rounded {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+    user-select: none;
+  }
+}
+
+@layer components {
+  .input-base {
+    @apply w-full rounded-field border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary;
+  }
+}
