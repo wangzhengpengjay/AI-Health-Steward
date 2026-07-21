@@ -21,7 +21,7 @@ class FamilyMember(Base):
     weight: Mapped[Optional[float]] = mapped_column(nullable=True)  # kg
     bmi: Mapped[Optional[float]] = mapped_column(nullable=True)  # computed
     blood_type: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # A/B/AB/O[+/-]
-    relationship: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    member_relation: Mapped[Optional[str]] = mapped_column("relationship", String(32), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

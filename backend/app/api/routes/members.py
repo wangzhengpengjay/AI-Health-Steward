@@ -28,7 +28,13 @@ async def create_member(
     payload: FamilyMemberCreate,
     db: AsyncSession = Depends(get_db),
 ) -> FamilyMember:
-    member = FamilyMember(**payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    if 'relationship' in data:
+        data['member_relation'] = data.pop('relationship')
+    # Ensure computed BMI is included
+    if payload.bmi is not None:
+        data['bmi'] = payload.bmi
+    member = FamilyMember(**data)
     db.add(member)
     await db.flush()
     await db.refresh(member)
@@ -40,13 +46,26 @@ async def list_members(db: AsyncSession = Depends(get_db)) -> List[FamilyMember]
     result = await db.execute(
         select(FamilyMember).where(FamilyMember.is_deleted.is_(False)).order_by(FamilyMember.id)
     )
-    return list(result.scalars().all())
+    members = list(result.scalars().all())
+    return [FamilyMemberResponse(
+        id=m.id, name=m.name, gender=m.gender,
+        birth_date=m.birth_date, height=m.height,
+        weight=m.weight, bmi=m.bmi, blood_type=m.blood_type,
+        relationship=m.member_relation,
+        created_at=m.created_at, updated_at=m.updated_at,
+    ) for m in members]
 
 
 @router.get("/{member_id}", response_model=FamilyMemberResponse)
 async def get_member(member_id: int, db: AsyncSession = Depends(get_db)) -> FamilyMember:
     member = await _get_member_or_404(db, member_id)
-    return member
+    return FamilyMemberResponse(
+            id=member.id, name=member.name, gender=member.gender,
+            birth_date=member.birth_date, height=member.height,
+            weight=member.weight, bmi=member.bmi, blood_type=member.blood_type,
+            relationship=member.member_relation,
+            created_at=member.created_at, updated_at=member.updated_at,
+        )
 
 
 @router.put("/{member_id}", response_model=FamilyMemberResponse)
@@ -67,15 +86,22 @@ async def update_member(
         setattr(member, key, value)
     await db.flush()
     await db.refresh(member)
-    return member
+    return FamilyMemberResponse(
+            id=member.id, name=member.name, gender=member.gender,
+            birth_date=member.birth_date, height=member.height,
+            weight=member.weight, bmi=member.bmi, blood_type=member.blood_type,
+            relationship=member.member_relation,
+            created_at=member.created_at, updated_at=member.updated_at,
+        )
 
 
-@router.delete("/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_member(member_id: int, db: AsyncSession = Depends(get_db)) -> None:
+@router.delete("/{member_id}")
+async def delete_member(member_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     member = await _get_member_or_404(db, member_id)
     member.is_deleted = True
     member.deleted_at = datetime.now(timezone.utc)
     await db.flush()
+    return {'message': 'Member soft-deleted', 'id': member_id}
 
 
 async def _get_member_or_404(db: AsyncSession, member_id: int) -> FamilyMember:
@@ -91,4 +117,10 @@ async def _get_member_or_404(db: AsyncSession, member_id: int) -> FamilyMember:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"FamilyMember {member_id} not found",
         )
-    return member
+    return FamilyMemberResponse(
+            id=member.id, name=member.name, gender=member.gender,
+            birth_date=member.birth_date, height=member.height,
+            weight=member.weight, bmi=member.bmi, blood_type=member.blood_type,
+            relationship=member.member_relation,
+            created_at=member.created_at, updated_at=member.updated_at,
+        )

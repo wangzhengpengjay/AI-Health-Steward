@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class FamilyMemberBase(BaseModel):
+    model_config = {"populate_by_name": True}
+
     name: str = Field(..., min_length=1, max_length=64)
     gender: str = Field(..., pattern=r"^(male|female|other)$")
     birth_date: Optional[date] = None
@@ -49,4 +51,14 @@ class FamilyMemberResponse(FamilyMemberBase):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+    @classmethod
+    def from_orm(cls, obj):
+        # Map member_relation attribute to relationship field
+        data = {"id": obj.id, "name": obj.name, "gender": obj.gender,
+                "birth_date": obj.birth_date, "height": obj.height,
+                "weight": obj.weight, "bmi": obj.bmi, "blood_type": obj.blood_type,
+                "relationship": obj.member_relation,
+                "created_at": obj.created_at, "updated_at": obj.updated_at}
+        return cls(**data)
