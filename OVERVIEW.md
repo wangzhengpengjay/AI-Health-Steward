@@ -1,6 +1,6 @@
 # 本地 AI 健康管家 - 项目总览
 
-> 本文档是项目的导航入口，说明文件架构、每份文件的作用，以及接下来的行动项。
+> 本文档是项目的导航入口，说明文件架构、每份文件的作用、当前进度和下一步。
 > 最后更新：2026-07-22
 
 ---
@@ -9,150 +9,225 @@
 
 | 维度 | 说明 |
 |------|------|
-| 产品形态 | 本地私有化部署的家庭 AI 健康管家，开源项目 |
+| 产品形态 | 本地私有化部署的家庭 AI 健康管家，开源项目（MIT） |
 | 第一用户 | 本人 + 家庭，单实例服务一个家庭 |
-| 模型策略 | API 为主（多模态必选、文字可选），兼容本地 LLM |
+| 模型策略 | API 为主（多模态必选、文字可选），兼容本地 LLM（Ollama） |
 | 主界面 | WebUI 承载完整功能 |
 | 渠道扩展 | 飞书（资料收集 + 轻问答），后续邮件等 |
-| 与晓医关系 | 完全独立，无代码/数据复用，功能上部分重叠，后续按需参照 |
+| 与晓医关系 | 完全独立，无代码/数据复用，功能上部分重叠 |
 
 ---
 
-## 二、文件架构
+## 二、技术栈（已确定）
+
+| 层 | 选型 | 决策依据 |
+|---|------|---------|
+| 后端 | Python 3.12 + FastAPI | AI/LLM 生态碾压级优势（design.md TD1） |
+| 前端 | React 18 + Vite + TypeScript + TailwindCSS | MediUI Design Token 映射 |
+| 数据库 | PostgreSQL 16 + pgvector | 单库事务一致性，结构化+向量一体化（TD2） |
+| ORM | SQLAlchemy 2.0 + Alembic | 异步支持，2.0 Mapped 语法 |
+| AI 模型 | OpenAI 兼容 API + Ollama | function calling 一体化路由（TD4） |
+| 部署 | Docker Compose | 一键启动，pgvector 镜像 |
+
+---
+
+## 三、文件架构
 
 ```
 ai-native/
-├── OVERVIEW.md                          ← 你正在看的这份文档
-└── openspec/
-    ├── config.yaml                      ← OpenSpec 配置（schema: spec-driven）
-    └── changes/
-        └── ai-health-steward/           ← 本次需求变更的完整规划
-            ├── .openspec.yaml           ← change 元数据（schema/创建时间/goal）
-            ├── README.md                ← change 简述（自动生成）
-            ├── proposal.md              ← 【需求概述】为什么做、改什么、capability 划分
-            ├── design.md                ← 【架构决策】7 个技术决策 + 风险 + 开放问题
-            ├── tasks.md                 ← 【版本规划】V0.1-V1.0 共 5 版 35 个任务
-            └── specs/                   ← 【能力规格】6 个 capability 的详细需求
-                ├── health-profile/      ← 健康画像与数据管理
-                │   └── spec.md
-                ├── report-ingestion/    ← 报告导入与多模态抽取
-                │   └── spec.md
-                ├── ai-consultation/     ← AI 健康咨询
-                │   └── spec.md
-                ├── visualization/       ← 健康数据可视化
-                │   └── spec.md
-                ├── channels/            ← 多渠道接入
-                │   └── spec.md
-                └── model-provider/      ← 模型层抽象
-                    └── spec.md
+├── OVERVIEW.md                              ← 你正在看的这份文档
+├── README.md                                ← 项目 README（特性/快速开始/技术栈/路线）
+├── LICENSE                                  ← MIT
+├── .env.example                             ← 环境变量模板
+├── .gitignore
+├── docker-compose.yml                       ← 一键部署（Postgres+pgvector + 后端 + 前端）
+│
+├── backend/                                 ← Python FastAPI 后端
+│   ├── Dockerfile
+│   ├── requirements.txt                     ← 依赖清单
+│   ├── alembic.ini                          ← Alembic 配置
+│   ├── alembic/
+│   │   └── env.py                           ← 迁移环境（导入所有 model）
+│   ├── app/
+│   │   ├── main.py                          ← FastAPI 入口 + CORS + /health
+│   │   ├── core/
+│   │   │   ├── config.py                    ← Pydantic Settings（读 .env）
+│   │   │   └── database.py                  ← SQLAlchemy 异步引擎 + session
+│   │   ├── models/
+│   │   │   ├── family.py                    ← A 字段族：FamilyMember 表
+│   │   │   └── health.py                    ← B-H 字段族：7 张健康画像表
+│   │   ├── schemas/
+│   │   │   ├── family.py                    ← 成员 Pydantic schema
+│   │   │   └── health.py                    ← 指标 Pydantic schema（自动计算异常/危急值）
+│   │   ├── api/
+│   │   │   ├── v1/router.py                 ← 路由汇总
+│   │   │   └── routes/
+│   │   │       ├── members.py               ← 家庭成员 CRUD API（含软删除）
+│   │   │       └── metrics.py               ← 指标录入 API（手动录入+来源标记）
+│   │   ├── services/                        ← 业务逻辑（待填充）
+│   │   └── providers/                       ← 模型 provider 抽象（待填充）
+│   └── tests/
+│       └── test_health.py                   ← 健康检查测试
+│
+├── frontend/                                ← React 前端
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── vite.config.ts                       ← Vite + 代理 /api → :8000
+│   ├── tailwind.config.ts                   ← MediUI Design Token 映射
+│   ├── tsconfig.json                        ← strict 模式
+│   ├── index.html                           ← HTML 入口（Material Symbols）
+│   └── src/
+│       ├── main.tsx                         ← React 入口 + QueryClient + Router
+│       ├── App.tsx                          ← 路由定义（6 条路由）
+│       ├── index.css                        ← TailwindCSS + MediUI CSS 变量
+│       ├── types/index.ts                   ← TypeScript 类型（A-H 字段族）
+│       ├── lib/api.ts                       ← fetch 封装 + membersApi + metricsApi
+│       ├── stores/memberStore.ts            ← Zustand（当前成员 + 成员列表）
+│       ├── components/
+│       │   ├── Layout.tsx                   ← 页面布局壳层
+│       │   ├── Sidebar.tsx                  ← 侧边栏导航
+│       │   └── MemberSwitcher.tsx           ← 成员切换器
+│       └── pages/
+│           ├── Dashboard.tsx                ← 画像看板（占位，V0.3 完整实现）
+│           ├── Chat.tsx                     ← AI 咨询（占位，V0.2 完整实现）
+│           ├── Reports.tsx                  ← 报告管理（占位，V0.3 完整实现）
+│           ├── Members.tsx                  ← 成员管理（✅ 完整实现）
+│           ├── MetricInput.tsx              ← 手动录入（✅ 完整实现）
+│           ├── Settings.tsx                 ← 设置（占位）
+│           └── PagePlaceholder.tsx          ← 占位页共享骨架
+│
+└── openspec/                                ← 需求文档与架构设计
+    ├── config.yaml                          ← OpenSpec 配置
+    └── changes/ai-health-steward/
+        ├── proposal.md                      ← 需求概述 + 用户故事 + 成功指标
+        ├── design.md                        ← 10 架构决策(D1-D10) + 5 技术决策(TD1-TD5) + 风险
+        ├── tasks.md                         ← V0.1-V1.0 共 5 版 35 个任务
+        ├── specs/                           ← 6 个 capability 详细规格
+        │   ├── health-profile/spec.md       ← 成员管理/字段族/入档/溯源/数据权利
+        │   ├── report-ingestion/spec.md     ← 上传/路由/抽取/归属/状态机/异常处理
+        │   ├── ai-consultation/spec.md      ← 意图路由/六类意图/工具调用/风险分级/预警
+        │   ├── visualization/spec.md        ← 趋势图/异常标识/画像看板
+        │   ├── channels/spec.md             ← WebUI/飞书/适配层/异常处理/身份识别
+        │   └── model-provider/spec.md       ← 三类 provider/必选依赖/路由逻辑
+        ├── UI-DESIGN-SYSTEM.md              ← UI 设计系统（Token/原子组件/组合组件/页面适配）
+        ├── PRD-REVIEW.md                    ← 第一轮 PRD 评审报告
+        └── PRD-REVIEW-R2.md                 ← 第二轮 PRD 评审报告（通过）
 ```
 
 ---
 
-## 三、文件说明
+## 四、文档说明
 
-### 3.1 规划层（OpenSpec artifacts）
+### 4.1 规划层（OpenSpec artifacts）
 
 | 文件 | 作用 | 什么时候看 |
 |------|------|-----------|
-| `proposal.md` | 需求的「为什么」和「做什么」。定义了 6 个 capability 的边界，是整个变更的契约 | 想回顾"我们到底要做什么"时 |
-| `design.md` | 需求的「怎么做」。7 个架构决策（D1-D7）讲了为什么这样选、备选方案是什么。还列了风险和 5 个待定开放问题 | 做技术选型或架构评审时 |
-| `tasks.md` | 实施的「什么时候做」。V0.1 到 V1.0 五个版本，35 个可勾选任务，按依赖排序 | 进入开发、跟踪进度时 |
-| `specs/*/spec.md` | 每个 capability 的详细需求规格，用 SHALL/MUST 规范语句 + WHEN/THEN 场景描述。每个场景就是一个可测试用例 | 开发某个功能前看对应 spec |
+| `proposal.md` | 需求的「为什么」和「做什么」。含用户故事、成功指标、6 个 capability 边界 | 回顾"我们到底要做什么"时 |
+| `design.md` | 架构决策（D1-D10）+ 技术选型（TD1-TD5）+ 风险 + 非功能需求 | 做架构或技术评审时 |
+| `tasks.md` | V0.1 到 V1.0 五个版本，35 个可勾选任务 | 跟踪开发进度时 |
+| `specs/*/spec.md` | 每个 capability 的 SHALL/SHOULD 需求 + WHEN/THEN 场景 | 开发某个功能前看对应 spec |
+| `UI-DESIGN-SYSTEM.md` | MediUI Design Token + 原子组件 + 组合组件 + 页面适配 + 交互闭环 | 开发 UI 时对照看 |
+| `PRD-REVIEW.md` | 第一轮评审（5 阻塞性问题 + 7 建议性问题） | 了解修复历史 |
+| `PRD-REVIEW-R2.md` | 第二轮评审（全部通过，3 个不阻塞残留） | 确认 PRD 质量 |
 
-### 3.2 六个 capability 说明
+### 4.2 代码层
 
-| Capability | spec 路径 | 覆盖什么 |
-|------------|----------|----------|
-| `health-profile` | `specs/health-profile/spec.md` | 家庭成员 CRUD、A-H 字段族、三种数据入档路径、数据溯源、画像作为单一事实来源 |
-| `report-ingestion` | `specs/report-ingestion/spec.md` | 图片/PDF 上传、模型按输入类型路由、多模态结构化抽取、姓名识别与归属匹配 |
-| `ai-consultation` | `specs/ai-consultation/spec.md` | 意图路由器、六类健康意图、工具调用框架、角色知识边界、聊天抽取回填闭环 |
-| `visualization` | `specs/visualization/spec.md` | 第一梯队指标趋势图、异常标识、画像看板 |
-| `channels` | `specs/channels/spec.md` | WebUI 主界面、飞书资料收集、飞书轻问答、渠道适配层抽象 |
-| `model-provider` | `specs/model-provider/spec.md` | 三类 provider、多模态必选依赖、本地 LLM 仅兜文字、路由逻辑 |
-
-### 3.3 配置文件
-
-| 文件 | 作用 |
-|------|------|
-| `openspec/config.yaml` | OpenSpec 项目配置，当前 schema 为 `spec-driven` |
-| `.openspec.yaml` | change 元数据，记录 schema、创建时间、goal |
+| 目录 | 当前状态 | 说明 |
+|------|---------|------|
+| `backend/app/core/` | ✅ 完成 | 配置管理 + 数据库引擎 |
+| `backend/app/models/` | ✅ 完成 | 8 张表（A-H 全字段族） |
+| `backend/app/schemas/` | ✅ 完成 | 成员 + 指标的 Pydantic schema |
+| `backend/app/api/routes/` | ✅ 完成 | 成员 CRUD + 指标录入 API |
+| `backend/app/providers/` | 待实现 | 模型 provider 抽象（V0.1 1.3-1.6） |
+| `backend/app/services/` | 待实现 | 业务逻辑层 |
+| `frontend/src/pages/` | 部分完成 | Members + MetricInput 完整，其余占位 |
+| `frontend/src/components/` | ✅ 基础完成 | Layout + Sidebar + MemberSwitcher |
 
 ---
 
-## 四、版本规划速览
+## 五、版本规划与进度
 
 ```
 V0.1 核心骨架        V0.2 AI 咨询        V0.3 报告+可视化      V0.4 飞书          V1.0 开源发布
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   ┌──────────────┐
-│ 项目脚手架    │    │ 意图路由器    │    │ 图片/PDF上传 │    │ 渠道适配抽象  │   │ 部署文档     │
+│ 项目脚手架 ✅  │    │ 意图路由器    │    │ 图片/PDF上传 │    │ 渠道适配抽象  │   │ 部署文档     │
 │ 模型层抽象    │───▶│ 工具调用框架  │───▶│ 多模态抽取   │───▶│ 飞书Bot接入  │──▶│ 隐私声明     │
-│ 画像数据模型  │    │ 六类意图实现  │    │ 趋势图+异常  │    │ 资料收集     │   │ 示例数据     │
-│ 家庭成员管理  │    │ 聊天抽取回填  │    │ 画像看板     │    │ 轻问答       │   │ 开发者文档   │
-│ 手动录入入档  │    │ 角色知识边界  │    │ 向量化知识库 │    │              │   │ README       │
-│ 基础WebUI    │    │ 对话界面     │    │              │    │              │   │              │
+│ 画像数据模型 ✅│    │ 六类意图实现  │    │ 趋势图+异常  │    │ 资料收集     │   │ 示例数据     │
+│ 家庭成员管理 ✅│    │ 聊天抽取回填  │    │ 画像看板     │    │ 轻问答       │   │ 开发者文档   │
+│ 手动录入入档 ✅│    │ 角色知识边界  │    │ 向量化知识库 │    │              │   │ README       │
+│ 基础WebUI ✅  │    │ 对话界面     │    │              │    │              │   │              │
 └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘   └──────────────┘
   能存能看             能聊               能看趋势           能随手丢            能fork能跑
 ```
 
-每个版本的目标是一句话：V0.1 数据能存进去画像能看出来；V0.2 能和 AI 聊健康 AI 懂你的画像；V0.3 报告能进系统趋势能看出来；V0.4 飞书能丢报告能随口问；V1.0 开发者能 fork 能跑能改。
+### V0.1 任务进度
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| 1.1 初始化项目结构 | ✅ 完成 | 目录/README/LICENSE/.env/docker-compose |
+| 1.2 技术栈脚手架 | ✅ 完成 | FastAPI + React + TailwindCSS 全部搭建 |
+| 1.3-1.6 model-provider | 待实现 | 三类 provider 抽象 + 路由逻辑 |
+| 1.7-1.8 数据模型建表 + 成员 CRUD | ✅ 完成 | 8 张表模型定义 + 成员 API |
+| 1.9 手动录入入档 | ✅ 完成 | 指标录入 API + 前端表单 |
+| 1.10 WebUI 基础框架 | ✅ 完成 | 布局 + 成员管理页 + 手动录入页 |
+
+> 1.7-1.10 的代码已写完，但尚未跑通数据库迁移和端到端联调。1.3-1.6 model-provider 是 V0.1 剩余的主要工作。
 
 ---
 
-## 五、接下来你需要干什么
+## 六、PRD 评审状态
 
-### 5.1 立即要做（进入开发前）
+PRD 已通过两轮评审，达到可进入需求评审标准：
 
-1. **审查 PRD**：通读 `proposal.md` 和 `design.md`，确认需求和理解无误。有要改的地方告诉我。
-2. **确定参照点**：你前面提到"后面会说怎么参照晓医"。确定哪些功能/设计要参照晓医的做法，我会更新进 `design.md`。
-3. **技术评审**：`design.md` 末尾列了 5 个开放问题，需要你拍板或组织评审：
-   - 技术栈选型（Python/FastAPI + React？Node 全栈？）
-   - 结构化存储选 SQLite 还是 Postgres
-   - 向量库选型（Chroma / Qdrant / pgvector）
-   - 飞书机器人审核流程
-   - 多模态抽取 JSON schema 形态（预定义 vs 自由输出后校验）
+| 维度 | 第一轮 | 第二轮 |
+|------|--------|--------|
+| 完整性 | 待完善（5问题） | ✅ 通过 |
+| 清晰度 | 待完善（4问题） | ✅ 通过 |
+| 边界覆盖 | 待完善（7问题） | ✅ 通过（1残留） |
+| 可度量性 | 待完善（4问题） | ✅ 通过 |
+| 医疗合规 | 待完善（5问题） | ✅ 通过（1残留） |
+| 工程可实施性 | 待完善（4问题） | ✅ 通过（1残留） |
 
-### 5.2 开发阶段
-
-4. **启动 V0.1**：技术栈定了之后，我按 `tasks.md` 的 1.1-1.10 开始实现。
-5. **逐版本验收**：每个版本完成后，对照该版本的目标和 spec 场景验收。
-
-### 5.3 发布阶段
-
-6. **开源准备**：V1.0 阶段一起完善文档、隐私声明、示例数据。
-7. **commit 到仓库**：PRD 定稿后，将 openspec 目录 commit 到项目仓库。
+3 个不阻塞残留：工具接口签名（技术评审定）、埋点事件清单（工程阶段补）、B/A 级边界升级规则（角色边界补）。
 
 ---
 
-## 六、接下来我会干什么
+## 七、接下来要做什么
 
-### 6.1 等你确认后
+### 7.1 V0.1 剩余工作
 
-- 根据你的审查意见修改 `proposal.md` / `design.md` / `specs/`
-- 根据你提供的晓医参照点，更新 `design.md` 对应决策
-- 如果开放问题你有倾向，我会把决策写进 `design.md`
+1. **1.3-1.6 model-provider 能力** — 三类 provider 抽象接口（多模态 API / 文字 API / 本地 LLM）+ 输入类型路由逻辑
+2. **数据库迁移** — `alembic revision --autogenerate` 生成首次迁移并执行
+3. **端到端联调** — 启动 Postgres + 后端 + 前端，验证成员管理和指标录入全流程
 
-### 6.2 进入开发后
+### 7.2 V0.2 AI 咨询能力
 
-- 按 `tasks.md` 顺序实现，每个任务完成后勾选
-- 实现过程中如发现 spec 有遗漏或矛盾，会回来更新 spec
-- 每个版本完成后做一次验收，对照 spec 场景检查
+4. 意图路由器（function calling 一体化）
+5. 工具调用框架（query_metrics / query_profile 等工具定义）
+6. 六类健康意图实现
+7. 聊天抽取回填闭环
+8. 角色知识边界 + S/A/B 风险分级 + 高危预警
+9. WebUI 对话界面
 
-### 6.3 我不会主动做的事
+### 7.3 后续版本
 
-- 不替你做技术选型决策（开放问题等你拍板）
-- 不替你决定参照晓医哪些功能（等你给方向）
-- 不在 PRD 未定稿前开始写实现代码
+- V0.3：报告导入 + 可视化（多模态抽取、趋势图、画像看板）
+- V0.4：飞书渠道
+- V1.0：开源发布（文档、隐私声明、示例数据）
 
 ---
 
-## 七、快速导航
+## 八、快速导航
 
 | 我想... | 看哪里 |
 |--------|--------|
 | 回顾需求全貌 | `openspec/changes/ai-health-steward/proposal.md` |
-| 理解架构决策 | `openspec/changes/ai-health-steward/design.md` |
+| 理解架构决策 | `openspec/changes/ai-health-steward/design.md`（D1-D10 + TD1-TD5） |
 | 看版本规划和任务 | `openspec/changes/ai-health-steward/tasks.md` |
 | 看某个功能的详细需求 | `openspec/changes/ai-health-steward/specs/<capability>/spec.md` |
+| 看 UI 设计规范 | `openspec/changes/ai-health-steward/UI-DESIGN-SYSTEM.md` |
+| 看 PRD 评审结论 | `openspec/changes/ai-health-steward/PRD-REVIEW-R2.md` |
+| 看后端代码 | `backend/app/`（main.py 入口） |
+| 看前端代码 | `frontend/src/`（App.tsx 路由入口） |
 | 校验 OpenSpec 状态 | `cd ai-native && openspec validate ai-health-steward --json` |
-| 查看 change 状态 | `cd ai-native && openspec status --change ai-health-steward --json` |
+| 启动开发环境 | `cp .env.example .env && docker-compose up -d` |
