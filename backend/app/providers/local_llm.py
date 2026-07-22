@@ -52,6 +52,8 @@ class LocalLLMProvider(ModelProvider):
                 entry["name"] = msg.name
             if msg.tool_call_id:
                 entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                entry["tool_calls"] = msg.tool_calls
             result.append(entry)
         return result
 

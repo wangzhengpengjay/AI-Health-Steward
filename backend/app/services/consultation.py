@@ -92,11 +92,20 @@ class ConsultationService:
 
             # The model wants to call tools — append the assistant message and
             # execute each requested call.
+            # Build tool_calls in OpenAI format for the assistant message
+            tool_calls_oi = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                for tc in response.tool_calls
+            ]
             messages.append(
                 Message(
                     role="assistant",
                     content=response.content or "",
-                    tool_call_id=None,
+                    tool_calls=tool_calls_oi,
                 )
             )
 
@@ -150,11 +159,20 @@ class ConsultationService:
                     yield delta
                 return
 
+            # Build tool_calls in OpenAI format for the assistant message
+            tool_calls_oi = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                for tc in response.tool_calls
+            ]
             messages.append(
                 Message(
                     role="assistant",
                     content=response.content or "",
-                    tool_call_id=None,
+                    tool_calls=tool_calls_oi,
                 )
             )
 

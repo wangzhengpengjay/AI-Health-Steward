@@ -25,6 +25,7 @@ class Message:
     content: str | list[dict[str, Any]]  # str for text, list for multimodal
     name: Optional[str] = None  # tool name for tool messages
     tool_call_id: Optional[str] = None
+    tool_calls: Optional[list[dict[str, Any]]] = None  # assistant tool calls
 
 
 @dataclass
