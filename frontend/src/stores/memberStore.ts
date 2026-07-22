@@ -3,11 +3,11 @@ import type { FamilyMember } from '@/types'
 
 interface MemberState {
   members: FamilyMember[]
-  currentMemberId: string | null
+  currentMemberId: number | null
   setMembers: (members: FamilyMember[]) => void
-  setCurrentMember: (id: string | null) => void
+  setCurrentMember: (id: number | null) => void
   upsertMember: (member: FamilyMember) => void
-  removeMember: (id: string) => void
+  removeMember: (id: number) => void
 }
 
 export const useMemberStore = create<MemberState>((set) => ({

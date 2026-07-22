@@ -13,12 +13,12 @@ export default function MemberSwitcher() {
       ) : (
         <select
           value={currentMemberId ?? ''}
-          onChange={(e) => setCurrentMember(e.target.value || null)}
+          onChange={(e) => setCurrentMember(e.target.value ? Number(e.target.value) : null)}
           className="w-full rounded-field border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
         >
           {members.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.name}（{relationshipLabel(m.relationship)}）
+              {m.name}（{relationshipLabel(m.relationship ?? "")}）
             </option>
           ))}
         </select>

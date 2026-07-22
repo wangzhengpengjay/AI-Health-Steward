@@ -49,7 +49,7 @@ export default function Members() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<FamilyMemberInput> }) =>
+    mutationFn: ({ id, data }: { id: number; data: Partial<FamilyMemberInput> }) =>
       membersApi.update(id, data),
     onSuccess: (member) => {
       queryClient.invalidateQueries({ queryKey: ['members'] })
@@ -59,7 +59,7 @@ export default function Members() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => membersApi.delete(id),
+    mutationFn: (id: number) => membersApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['members'] })
       if (deleteTarget) removeMember(deleteTarget.id)
@@ -197,7 +197,7 @@ function MemberFormModal({ editing, onSubmit, onClose, loading, error }: MemberF
     name: editing?.name ?? '',
     gender: editing?.gender ?? 'male',
     birth_date: editing?.birth_date ?? '',
-    relationship: editing?.relationship ?? 'self',
+    relationship: editing?.relationship ?? ('self' as Relationship),
     blood_type: editing?.blood_type ?? 'unknown',
     phone: editing?.phone ?? '',
   })
@@ -245,7 +245,7 @@ function MemberFormModal({ editing, onSubmit, onClose, loading, error }: MemberF
 
             <Field label="关系" required>
               <select
-                value={form.relationship}
+                value={form.relationship ?? ""}
                 onChange={(e) => handleChange('relationship', e.target.value as Relationship)}
                 className="input-base"
               >
@@ -370,6 +370,6 @@ function genderLabel(g: Gender): string {
   return GENDER_OPTIONS.find((o) => o.value === g)?.label ?? g
 }
 
-function relationshipLabel(r: Relationship): string {
-  return RELATIONSHIP_OPTIONS.find((o) => o.value === r)?.label ?? r
+function relationshipLabel(r?: string): string {
+  return RELATIONSHIP_OPTIONS.find((o) => o.value === r)?.label ?? '其他'
 }

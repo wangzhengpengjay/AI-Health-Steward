@@ -8,22 +8,63 @@ import { metricsApi, chatApi, ApiError } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 import type { MetricRecord, SourceType } from '@/types'
 
-// ---- Metric tab config ----
-interface MetricTab {
+// ---- Metric line config ----
+interface MetricLine {
   key: string
   label: string
-  unit: string
-  refLower?: number
-  refUpper?: number
+  refLower: number
+  refUpper: number
   color: string
+  warningUpper: number  // edge of warning zone
+  criticalUpper: number  // critical threshold
+  isLowerAbnormal?: boolean  // for HDL-C: low is abnormal
+}
+
+interface MetricTab {
+  label: string
+  unit: string
+  color: string
+  lines: MetricLine[]
+  bmiConfig?: { refLower: number; refUpper: number; warningUpper: number; label: string }
 }
 
 const METRIC_TABS: MetricTab[] = [
-  { key: 'systolic_blood_pressure', label: '血压', unit: 'mmHg', refLower: 90, refUpper: 120, color: '#3363FF' },
-  { key: 'fasting_glucose', label: '血糖', unit: 'mmol/L', refLower: 3.9, refUpper: 6.1, color: '#0891B2' },
-  { key: 'total_cholesterol', label: '血脂', unit: 'mmol/L', refLower: 3.1, refUpper: 5.2, color: '#059669' },
-  { key: 'heart_rate', label: '心率', unit: 'bpm', refLower: 60, refUpper: 100, color: '#E6A23C' },
-  { key: 'weight', label: '体重', unit: 'kg', refLower: 0, refUpper: 0, color: '#F56C6C' },
+  {
+    label: '血压', unit: 'mmHg', color: '#3363FF',
+    lines: [
+      { key: 'systolic_blood_pressure', label: '收缩压', refLower: 90, refUpper: 120, color: '#3363FF', warningUpper: 139, criticalUpper: 180 },
+      { key: 'diastolic_blood_pressure', label: '舒张压', refLower: 60, refUpper: 80, color: '#5580FF', warningUpper: 89, criticalUpper: 110 },
+    ],
+  },
+  {
+    label: '血糖', unit: 'mmol/L', color: '#0891B2',
+    lines: [
+      { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1 },
+      { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7 },
+    ],
+  },
+  {
+    label: '血脂', unit: 'mmol/L', color: '#059669',
+    lines: [
+      { key: 'total_cholesterol', label: '总胆固醇 TC', refLower: 0, refUpper: 5.2, color: '#059669', warningUpper: 6.2, criticalUpper: 0 },
+      { key: 'triglycerides', label: '甘油三酯 TG', refLower: 0, refUpper: 1.7, color: '#0891B2', warningUpper: 2.3, criticalUpper: 0 },
+      { key: 'ldl_cholesterol', label: '低密度脂蛋白 LDL-C', refLower: 0, refUpper: 3.4, color: '#E6A23C', warningUpper: 4.1, criticalUpper: 0 },
+      { key: 'hdl_cholesterol', label: '高密度脂蛋白 HDL-C', refLower: 1.0, refUpper: 0, color: '#3363FF', warningUpper: 0, criticalUpper: 0, isLowerAbnormal: true },
+    ],
+  },
+  {
+    label: '心率', unit: 'bpm', color: '#E6A23C',
+    lines: [
+      { key: 'heart_rate', label: '心率', refLower: 60, refUpper: 100, color: '#E6A23C', warningUpper: 0, criticalUpper: 0 },
+    ],
+  },
+  {
+    label: '体重/BMI', unit: 'kg', color: '#F56C6C',
+    lines: [
+      { key: 'weight', label: '体重', refLower: 0, refUpper: 0, color: '#F56C6C', warningUpper: 0, criticalUpper: 0 },
+    ],
+    bmiConfig: { refLower: 18.5, refUpper: 24.0, warningUpper: 28.0, label: 'BMI' },
+  },
 ]
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -37,14 +78,29 @@ export default function MetricInput() {
   const [activeTab, setActiveTab] = useState(0)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [addLineKey, setAddLineKey] = useState<string>('')
   const queryClient = useQueryClient()
 
   const currentMember = members.find((m) => m.id === currentMemberId)
-  const metric = METRIC_TABS[activeTab]
+  const tab = METRIC_TABS[activeTab]
 
-  const { data: records = [], isLoading } = useQuery<MetricRecord[]>({
-    queryKey: ['metrics', currentMemberId, metric.key],
-    queryFn: () => metricsApi.getByName(String(currentMemberId), metric.key),
+  // Fetch all metric lines' data for this tab
+  const { data: allRecords = {}, isLoading } = useQuery({
+    queryKey: ['metrics', currentMemberId, activeTab],
+    queryFn: async () => {
+      const results: Record<string, MetricRecord[]> = {}
+      await Promise.all(
+        tab.lines.map(async (line) => {
+          try {
+            const records = await metricsApi.getByName(String(currentMemberId), line.key)
+            results[line.key] = records
+          } catch {
+            results[line.key] = []
+          }
+        })
+      )
+      return results
+    },
     enabled: !!currentMemberId,
   })
 
@@ -52,7 +108,6 @@ export default function MetricInput() {
     mutationFn: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }) =>
       metricsApi.create(String(currentMemberId), { ...data, source_type: 'manual' as SourceType }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['metrics', currentMemberId, metric.key] })
       queryClient.invalidateQueries({ queryKey: ['metrics', currentMemberId] })
       setShowAddModal(false)
     },
@@ -69,17 +124,51 @@ export default function MetricInput() {
     )
   }
 
-  // Prepare chart data
-  const chartData = [...records]
-    .sort((a, b) => new Date(a.measured_at).getTime() - new Date(b.measured_at).getTime())
-    .map((r) => ({
-      time: new Date(r.measured_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
-      value: r.value,
-      isAbnormal: r.is_abnormal,
-      source: r.source_type,
-    }))
+  // Build chart data: merge all lines by date
+  const allDates = new Set<string>()
+  Object.values(allRecords).forEach((records) => {
+    records.forEach((r) => allDates.add(r.measured_at))
+  })
+  const sortedDates = [...allDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
 
-  const abnormalCount = records.filter((r) => r.is_abnormal).length
+  const chartData = sortedDates.map((date) => {
+    const point: Record<string, string | number | boolean> = {
+      time: new Date(date).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+    }
+    tab.lines.forEach((line) => {
+      const records = allRecords[line.key] || []
+      const record = records.find((r) => r.measured_at === date)
+      if (record) {
+        point[line.key] = record.value
+        point[`${line.key}_abnormal`] = record.is_abnormal
+      }
+    })
+    return point
+  })
+
+  // Compute BMI if weight tab
+  let bmiValue: number | null = null
+  if (tab.bmiConfig && currentMember) {
+    const weightRecords = allRecords['weight'] || []
+    if (weightRecords.length > 0 && currentMember.height) {
+      const latestWeight = weightRecords[0].value
+      const heightM = currentMember.height / 100
+      bmiValue = Math.round((latestWeight / (heightM * heightM)) * 10) / 10
+    }
+  }
+
+  // Count abnormals
+  let totalRecords = 0
+  let abnormalCount = 0
+  Object.values(allRecords).forEach((records) => {
+    totalRecords += records.length
+    abnormalCount += records.filter((r) => r.is_abnormal).length
+  })
+
+  const handleAddClick = () => {
+    setAddLineKey(tab.lines[0].key)
+    setShowAddModal(true)
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -103,7 +192,7 @@ export default function MetricInput() {
             上传报告
           </button>
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={handleAddClick}
             className="flex items-center gap-1.5 rounded-field bg-primary px-3 py-2 text-sm text-white transition hover:bg-primary-hover"
           >
             <span className="material-symbols-rounded text-lg">add</span>
@@ -114,60 +203,76 @@ export default function MetricInput() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-slate-200 bg-white px-6">
-        {METRIC_TABS.map((tab, i) => (
+        {METRIC_TABS.map((t, i) => (
           <button
-            key={tab.key}
+            key={i}
             onClick={() => setActiveTab(i)}
             className={`relative px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === i
-                ? 'text-primary'
-                : 'text-slate-500 hover:text-slate-700'
+              activeTab === i ? 'text-primary' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            {tab.label}
-            {activeTab === i && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />
-            )}
+            {t.label}
+            {activeTab === i && <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" />}
           </button>
         ))}
       </div>
 
-      {/* Chart area */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto bg-bg-secondary p-6">
         {/* Summary cards */}
         <div className="mb-4 flex gap-4">
+          {tab.lines.slice(0, 3).map((line) => {
+            const records = allRecords[line.key] || []
+            const latest = records[0]
+            return (
+              <div key={line.key} className="flex-1 rounded-card border border-slate-200 bg-white p-4">
+                <p className="text-xs text-slate-500">{line.label}</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-800">
+                  {latest ? latest.value : '--'}
+                  <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
+                </p>
+                {latest && latest.is_abnormal && (
+                  <span className="mt-1 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                    {line.isLowerAbnormal ? '偏低' : '偏高'}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+          {tab.bmiConfig && (
+            <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
+              <p className="text-xs text-slate-500">{tab.bmiConfig.label}</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-800">
+                {bmiValue ?? '--'}
+                <span className="ml-1 text-sm text-slate-400">kg/m²</span>
+              </p>
+              {bmiValue !== null && (
+                <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs ${
+                  bmiValue < tab.bmiConfig.refLower
+                    ? 'bg-blue-50 text-blue-600'
+                    : bmiValue >= tab.bmiConfig.warningUpper
+                      ? 'bg-red-50 text-red-600'
+                      : bmiValue >= tab.bmiConfig.refUpper
+                        ? 'bg-amber-50 text-amber-600'
+                        : 'bg-green-50 text-green-600'
+                }`}>
+                  {bmiValue < tab.bmiConfig.refLower ? '偏瘦' : bmiValue >= tab.bmiConfig.warningUpper ? '肥胖' : bmiValue >= tab.bmiConfig.refUpper ? '超重' : '正常'}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">最新值</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-800">
-              {records.length > 0 ? records[0].value : '--'}
-              <span className="ml-1 text-sm text-slate-400">{metric.unit}</span>
-            </p>
-          </div>
-          <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">参考范围</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-800">
-              {metric.refLower && metric.refUpper
-                ? `${metric.refLower}-${metric.refUpper}`
-                : '--'}
-              <span className="ml-1 text-sm text-slate-400">{metric.unit}</span>
-            </p>
-          </div>
-          <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">异常次数</p>
+            <p className="text-xs text-slate-500">异常 / 总记录</p>
             <p className={`mt-1 text-2xl font-semibold ${abnormalCount > 0 ? 'text-amber-600' : 'text-green-600'}`}>
               {abnormalCount}
-              <span className="ml-1 text-sm text-slate-400">/ {records.length}</span>
+              <span className="ml-1 text-sm text-slate-400">/ {totalRecords}</span>
             </p>
-          </div>
-          <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
-            <p className="text-xs text-slate-500">记录数</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-800">{records.length}</p>
           </div>
         </div>
 
-        {/* Trend chart */}
+        {/* Chart */}
         <div className="rounded-card border border-slate-200 bg-white p-6">
-          <h3 className="mb-4 text-sm font-medium text-slate-700">{metric.label}趋势图</h3>
+          <h3 className="mb-4 text-sm font-medium text-slate-700">{tab.label}趋势图</h3>
           {isLoading ? (
             <div className="flex h-64 items-center justify-center">
               <span className="material-symbols-rounded animate-spin text-slate-300">progress_activity</span>
@@ -178,68 +283,104 @@ export default function MetricInput() {
               <p className="mt-2 text-sm">暂无数据，点击"新增数据"或"上传报告"开始记录</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={320}>
               <ComposedChart data={chartData} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" />
                 <XAxis dataKey="time" tick={{ fontSize: 12, fill: '#94A3B8' }} />
                 <YAxis tick={{ fontSize: 12, fill: '#94A3B8' }} />
                 <Tooltip
                   contentStyle={{ borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 12 }}
-                  formatter={(v) => [`${v} ${metric.unit}`, metric.label]}
-                  labelFormatter={(l) => `日期: ${l}`}
+                  formatter={((v: unknown, name: unknown) => {
+                    return [`${v} ${tab.unit}`, String(name)]
+                  }) as never}
                 />
-                {metric.refLower !== undefined && metric.refUpper !== undefined && metric.refUpper > 0 && (
-                  <>
-                    <ReferenceLine y={metric.refUpper} stroke="#E6A23C" strokeDasharray="5 5" label={{ value: '上限', fontSize: 10, fill: '#E6A23C' }} />
-                    <ReferenceLine y={metric.refLower} stroke="#67C23A" strokeDasharray="5 5" label={{ value: '下限', fontSize: 10, fill: '#67C23A' }} />
-                  </>
-                )}
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke={metric.color}
-                  strokeWidth={2}
-                  dot={(props: { cx?: number; cy?: number; payload?: { isAbnormal?: boolean } }) => {
-                    const { cx, cy, payload } = props
-                    if (cx === undefined || cy === undefined) return <g key={Math.random()} />
-                    return (
-                      <circle
-                        key={`dot-${cx}-${cy}`}
-                        cx={cx}
-                        cy={cy}
-                        r={4}
-                        fill={payload?.isAbnormal ? '#F56C6C' : metric.color}
-                        stroke="#fff"
-                        strokeWidth={1.5}
-                      />
-                    )
-                  }}
-                />
+                {/* Reference lines for each metric line */}
+                {tab.lines.map((line) => (
+                  <g key={`ref-${line.key}`}>
+                    {line.refUpper > 0 && (
+                      <ReferenceLine y={line.refUpper} stroke={line.color} strokeDasharray="3 3" strokeOpacity={0.4} />
+                    )}
+                    {line.refLower > 0 && !line.isLowerAbnormal && (
+                      <ReferenceLine y={line.refLower} stroke="#67C23A" strokeDasharray="3 3" strokeOpacity={0.3} />
+                    )}
+                    {line.isLowerAbnormal && line.refLower > 0 && (
+                      <ReferenceLine y={line.refLower} stroke="#F56C6C" strokeDasharray="3 3" strokeOpacity={0.4} label={{ value: `${line.label}下限`, fontSize: 9, fill: '#F56C6C' }} />
+                    )}
+                  </g>
+                ))}
+                {/* Lines */}
+                {tab.lines.map((line) => (
+                  <Line
+                    key={line.key}
+                    type="monotone"
+                    dataKey={line.key}
+                    name={line.label}
+                    stroke={line.color}
+                    strokeWidth={2}
+                    connectNulls
+                    dot={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                      const { cx, cy, payload } = props
+                      if (cx === undefined || cy === undefined) return <g key={`g-${line.key}-${cx}`} />
+                      const isAbnormal = payload?.[`${line.key}_abnormal`]
+                      return (
+                        <circle
+                          key={`dot-${line.key}-${cx}-${cy}`}
+                          cx={cx}
+                          cy={cy}
+                          r={4}
+                          fill={isAbnormal ? '#F56C6C' : line.color}
+                          stroke="#fff"
+                          strokeWidth={1.5}
+                        />
+                      )
+                    }}
+                  />
+                ))}
               </ComposedChart>
             </ResponsiveContainer>
           )}
+          {/* Legend with reference ranges */}
+          <div className="mt-3 flex flex-wrap gap-4">
+            {tab.lines.map((line) => (
+              <div key={line.key} className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+                {line.label}
+                {line.refUpper > 0 && !line.isLowerAbnormal && (
+                  <span className="text-slate-400">({line.refLower}-{line.refUpper} {tab.unit})</span>
+                )}
+                {line.isLowerAbnormal && line.refLower > 0 && (
+                  <span className="text-slate-400">(≥{line.refLower} {tab.unit})</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Recent records */}
-        {records.length > 0 && (
+        {totalRecords > 0 && (
           <div className="mt-4 rounded-card border border-slate-200 bg-white p-4">
             <h3 className="mb-3 text-sm font-medium text-slate-700">最近记录</h3>
             <div className="space-y-2">
-              {records.slice(0, 10).map((r) => (
-                <div key={r.id} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
-                  <div className="flex items-center gap-3">
-                    <span className={`inline-block h-2 w-2 rounded-full ${r.is_abnormal ? 'bg-amber-500' : 'bg-green-500'}`} />
-                    <span className="text-sm font-medium text-slate-700">{r.value} {r.unit}</span>
-                    {r.is_abnormal && (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">异常</span>
-                    )}
+              {tab.lines.flatMap((line) =>
+                (allRecords[line.key] || []).slice(0, 5).map((r) => (
+                  <div key={`${line.key}-${r.id}`} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
+                    <div className="flex items-center gap-3">
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
+                      <span className="text-xs text-slate-500">{line.label}</span>
+                      <span className="text-sm font-medium text-slate-700">{r.value} {tab.unit}</span>
+                      {r.is_abnormal && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                          {line.isLowerAbnormal ? '偏低' : '偏高'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-400">
+                      <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
+                      <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-400">
-                    <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
-                    <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         )}
@@ -248,7 +389,9 @@ export default function MetricInput() {
       {/* Add data modal */}
       {showAddModal && (
         <AddDataModal
-          metric={metric}
+          tab={tab}
+          selectedLineKey={addLineKey}
+          onSelectLine={setAddLineKey}
           onClose={() => setShowAddModal(false)}
           onSubmit={(data) => addMutation.mutate(data)}
           isLoading={addMutation.isPending}
@@ -269,29 +412,33 @@ export default function MetricInput() {
 
 // ---- Add Data Modal ----
 interface AddDataModalProps {
-  metric: MetricTab
+  tab: MetricTab
+  selectedLineKey: string
+  onSelectLine: (key: string) => void
   onClose: () => void
   onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }) => void
   isLoading: boolean
   error: string | null
 }
 
-function AddDataModal({ metric, onClose, onSubmit, isLoading, error }: AddDataModalProps) {
+function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, isLoading, error }: AddDataModalProps) {
   const [value, setValue] = useState('')
   const [measuredAt, setMeasuredAt] = useState(new Date().toISOString().slice(0, 16))
   const [context, setContext] = useState('')
+  const selectedLine = tab.lines.find((l) => l.key === selectedLineKey) || tab.lines[0]
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const numValue = parseFloat(value)
     if (isNaN(numValue)) return
     onSubmit({
-      metric_name: metric.key,
+      metric_name: selectedLine.key,
       value: numValue,
-      unit: metric.unit,
+      unit: tab.unit,
       measured_at: new Date(measuredAt).toISOString(),
-      reference_lower: metric.refLower,
-      reference_upper: metric.refUpper,
+      reference_lower: selectedLine.refLower || undefined,
+      reference_upper: selectedLine.refUpper || undefined,
+      context: context || undefined,
     })
   }
 
@@ -299,14 +446,29 @@ function AddDataModal({ metric, onClose, onSubmit, isLoading, error }: AddDataMo
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-96 rounded-card bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-medium text-slate-800">新增{metric.label}数据</h2>
+          <h2 className="text-base font-medium text-slate-800">新增{tab.label}数据</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <span className="material-symbols-rounded">close</span>
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Line selector if multiple */}
+          {tab.lines.length > 1 && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">指标项</label>
+              <select
+                value={selectedLineKey}
+                onChange={(e) => onSelectLine(e.target.value)}
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              >
+                {tab.lines.map((line) => (
+                  <option key={line.key} value={line.key}>{line.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">数值 ({metric.unit})</label>
+            <label className="mb-1 block text-xs font-medium text-slate-500">数值 ({tab.unit})</label>
             <input
               type="number"
               step="0.1"
@@ -315,7 +477,7 @@ function AddDataModal({ metric, onClose, onSubmit, isLoading, error }: AddDataMo
               required
               autoFocus
               className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              placeholder={`输入${metric.label}数值`}
+              placeholder={`输入${selectedLine.label}数值`}
             />
           </div>
           <div>
@@ -337,9 +499,12 @@ function AddDataModal({ metric, onClose, onSubmit, isLoading, error }: AddDataMo
               placeholder="如：空腹、餐后、静息"
             />
           </div>
-          {metric.refLower && metric.refUpper ? (
-            <p className="text-xs text-slate-400">参考范围: {metric.refLower}-{metric.refUpper} {metric.unit}</p>
-          ) : null}
+          {selectedLine.refUpper > 0 && !selectedLine.isLowerAbnormal && (
+            <p className="text-xs text-slate-400">参考范围: {selectedLine.refLower}-{selectedLine.refUpper} {tab.unit}</p>
+          )}
+          {selectedLine.isLowerAbnormal && selectedLine.refLower > 0 && (
+            <p className="text-xs text-slate-400">正常范围: ≥{selectedLine.refLower} {tab.unit}（偏低为异常）</p>
+          )}
           {error && <p className="text-sm text-red-500">{error}</p>}
           <div className="flex gap-3 pt-2">
             <button
@@ -422,7 +587,6 @@ function UploadModal({ memberId, onClose }: UploadModalProps) {
 
         {!result && (
           <>
-            {/* File select */}
             <input
               ref={fileInputRef}
               type="file"
@@ -450,7 +614,6 @@ function UploadModal({ memberId, onClose }: UploadModalProps) {
               )}
             </div>
 
-            {/* Message */}
             <div className="mb-4">
               <label className="mb-1 block text-xs font-medium text-slate-500">解读要求 (可选)</label>
               <input
@@ -473,7 +636,6 @@ function UploadModal({ memberId, onClose }: UploadModalProps) {
           </>
         )}
 
-        {/* Result */}
         {result && (
           <div>
             <div className="mb-3 flex items-center gap-2 text-sm text-green-600">

@@ -48,7 +48,7 @@ async function request<T>(
 export const membersApi = {
   list: () => request<FamilyMember[]>('/members'),
 
-  get: (id: string) => request<FamilyMember>(`/members/${id}`),
+  get: (id: number) => request<FamilyMember>(`/members/${id}`),
 
   create: (data: FamilyMemberInput) =>
     request<FamilyMember>('/members', {
@@ -56,20 +56,20 @@ export const membersApi = {
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: Partial<FamilyMemberInput>) =>
+  update: (id: number, data: Partial<FamilyMemberInput>) =>
     request<FamilyMember>(`/members/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
 
-  delete: (id: string) =>
+  delete: (id: number) =>
     request<void>(`/members/${id}`, { method: 'DELETE' }),
 }
 
 // ---- Metric Records ----
 
 export const metricsApi = {
-  list: (memberId: string) =>
+  list: (memberId: number) =>
     request<MetricRecord[]>(`/members/${memberId}/metrics`),
 
   getByName: (memberId: string, metricName: string) =>
@@ -81,7 +81,7 @@ export const metricsApi = {
       body: JSON.stringify(data),
     }),
 
-  delete: (id: string) =>
+  delete: (id: number) =>
     request<void>(`/metrics/${id}`, { method: 'DELETE' }),
 }
 

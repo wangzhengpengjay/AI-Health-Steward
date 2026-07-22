@@ -15,12 +15,15 @@ export type Relationship =
 
 // Field family A: basic info
 export interface FamilyMember {
-  id: string
+  id: number
   name: string
   gender: Gender
   birth_date: string // ISO date
-  relationship: Relationship
+  height?: number // cm
+  weight?: number // kg
+  bmi?: number
   blood_type?: BloodType
+  relationship?: Relationship
   phone?: string
   avatar_url?: string
   created_at: string
