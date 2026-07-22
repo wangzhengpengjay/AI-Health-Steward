@@ -29,7 +29,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/your-username/ai-health-steward.git
+git clone https://github.com/wangzhengpengjay/AI-Health-Steward.git
 cd ai-health-steward
 
 # 2. 复制环境配置并填写
