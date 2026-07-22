@@ -15,9 +15,11 @@ interface MetricLine {
   refLower: number
   refUpper: number
   color: string
-  warningUpper: number  // edge of warning zone
-  criticalUpper: number  // critical threshold
-  isLowerAbnormal?: boolean  // for HDL-C: low is abnormal
+  warningUpper: number
+  criticalUpper: number
+  isLowerAbnormal?: boolean
+  contextOptions?: string[]  // predefined context choices for this metric
+  contextLabel?: string  // label for the context field, default "备注"
 }
 
 interface MetricTab {
@@ -32,30 +34,30 @@ const METRIC_TABS: MetricTab[] = [
   {
     label: '血压', unit: 'mmHg', color: '#3363FF',
     lines: [
-      { key: 'systolic_blood_pressure', label: '收缩压', refLower: 90, refUpper: 120, color: '#3363FF', warningUpper: 139, criticalUpper: 180 },
-      { key: 'diastolic_blood_pressure', label: '舒张压', refLower: 60, refUpper: 80, color: '#5580FF', warningUpper: 89, criticalUpper: 110 },
+      { key: 'systolic_blood_pressure', label: '收缩压', refLower: 90, refUpper: 120, color: '#3363FF', warningUpper: 139, criticalUpper: 180, contextLabel: '测量姿势', contextOptions: ['坐位', '卧位', '站立位'] },
+      { key: 'diastolic_blood_pressure', label: '舒张压', refLower: 60, refUpper: 80, color: '#5580FF', warningUpper: 89, criticalUpper: 110, contextLabel: '测量姿势', contextOptions: ['坐位', '卧位', '站立位'] },
     ],
   },
   {
     label: '血糖', unit: 'mmol/L', color: '#0891B2',
     lines: [
-      { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1 },
-      { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7 },
+      { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1, contextLabel: '测量场景', contextOptions: ['空腹（8h以上未进食）', '餐前', '睡前'] },
+      { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7, contextLabel: '餐后时间', contextOptions: ['餐后1h', '餐后2h', '餐后3h'] },
     ],
   },
   {
     label: '血脂', unit: 'mmol/L', color: '#059669',
     lines: [
-      { key: 'total_cholesterol', label: '总胆固醇 TC', refLower: 0, refUpper: 5.2, color: '#059669', warningUpper: 6.2, criticalUpper: 0 },
-      { key: 'triglycerides', label: '甘油三酯 TG', refLower: 0, refUpper: 1.7, color: '#0891B2', warningUpper: 2.3, criticalUpper: 0 },
-      { key: 'ldl_cholesterol', label: '低密度脂蛋白 LDL-C', refLower: 0, refUpper: 3.4, color: '#E6A23C', warningUpper: 4.1, criticalUpper: 0 },
+      { key: 'total_cholesterol', label: '总胆固醇 TC', refLower: 0, refUpper: 5.2, color: '#059669', warningUpper: 6.2, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
+      { key: 'triglycerides', label: '甘油三酯 TG', refLower: 0, refUpper: 1.7, color: '#0891B2', warningUpper: 2.3, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
+      { key: 'ldl_cholesterol', label: '低密度脂蛋白 LDL-C', refLower: 0, refUpper: 3.4, color: '#E6A23C', warningUpper: 4.1, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
       { key: 'hdl_cholesterol', label: '高密度脂蛋白 HDL-C', refLower: 1.0, refUpper: 0, color: '#3363FF', warningUpper: 0, criticalUpper: 0, isLowerAbnormal: true },
     ],
   },
   {
     label: '心率', unit: 'bpm', color: '#E6A23C',
     lines: [
-      { key: 'heart_rate', label: '心率', refLower: 60, refUpper: 100, color: '#E6A23C', warningUpper: 0, criticalUpper: 0 },
+      { key: 'heart_rate', label: '心率', refLower: 60, refUpper: 100, color: '#E6A23C', warningUpper: 0, criticalUpper: 0, contextLabel: '测量状态', contextOptions: ['静息', '运动后', '睡眠中'] },
     ],
   },
   {
@@ -396,6 +398,7 @@ export default function MetricInput() {
           onSubmit={(data) => addMutation.mutate(data)}
           isLoading={addMutation.isPending}
           error={addMutation.error instanceof ApiError ? addMutation.error.message : null}
+          memberHeight={currentMember?.height}
         />
       )}
 
@@ -419,13 +422,23 @@ interface AddDataModalProps {
   onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }) => void
   isLoading: boolean
   error: string | null
+  memberHeight?: number  // for BMI calculation
 }
 
-function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, isLoading, error }: AddDataModalProps) {
+function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, isLoading, error, memberHeight }: AddDataModalProps) {
   const [value, setValue] = useState('')
+  const [height, setHeight] = useState(memberHeight?.toString() || '')
   const [measuredAt, setMeasuredAt] = useState(new Date().toISOString().slice(0, 16))
   const [context, setContext] = useState('')
   const selectedLine = tab.lines.find((l) => l.key === selectedLineKey) || tab.lines[0]
+  const isWeightTab = !!tab.bmiConfig
+
+  // Real-time BMI calculation
+  const weightNum = parseFloat(value)
+  const heightNum = parseFloat(height)
+  const bmi = (isWeightTab && !isNaN(weightNum) && !isNaN(heightNum) && heightNum > 0)
+    ? Math.round((weightNum / Math.pow(heightNum / 100, 2)) * 10) / 10
+    : null
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -468,7 +481,9 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">数值 ({tab.unit})</label>
+            <label className="mb-1 block text-xs font-medium text-slate-500">
+              {selectedLine.label} ({tab.unit})
+            </label>
             <input
               type="number"
               step="0.1"
@@ -480,6 +495,45 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
               placeholder={`输入${selectedLine.label}数值`}
             />
           </div>
+          {/* Height input for weight/BMI tab */}
+          {isWeightTab && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">身高 (cm)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                placeholder="输入身高"
+              />
+            </div>
+          )}
+          {/* Real-time BMI display */}
+          {isWeightTab && bmi !== null && tab.bmiConfig && (
+            <div className="rounded-field bg-slate-50 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">计算 BMI</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {bmi} kg/m²
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                    bmi < tab.bmiConfig.refLower
+                      ? 'bg-blue-50 text-blue-600'
+                      : bmi >= tab.bmiConfig.warningUpper
+                        ? 'bg-red-50 text-red-600'
+                        : bmi >= tab.bmiConfig.refUpper
+                          ? 'bg-amber-50 text-amber-600'
+                          : 'bg-green-50 text-green-600'
+                  }`}>
+                    {bmi < tab.bmiConfig.refLower ? '偏瘦' : bmi >= tab.bmiConfig.warningUpper ? '肥胖' : bmi >= tab.bmiConfig.refUpper ? '超重' : '正常'}
+                  </span>
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                正常: {tab.bmiConfig.refLower}-{tab.bmiConfig.refUpper} | 超重: {tab.bmiConfig.refUpper}-{tab.bmiConfig.warningUpper} | 肥胖: ≥{tab.bmiConfig.warningUpper}
+              </p>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">测量时间</label>
             <input
@@ -489,16 +543,36 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
               className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">备注 (可选)</label>
-            <input
-              type="text"
-              value={context}
-              onChange={(e) => setContext(e.target.value)}
-              className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              placeholder="如：空腹、餐后、静息"
-            />
-          </div>
+          {/* Context: dropdown if predefined options, free text otherwise */}
+          {selectedLine.contextOptions ? (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                {selectedLine.contextLabel || '备注'} (可选)
+              </label>
+              <select
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              >
+                <option value="">请选择</option>
+                {selectedLine.contextOptions.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">备注 (可选)</label>
+              <input
+                type="text"
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                placeholder="输入备注信息"
+              />
+            </div>
+          )}
+          {/* Reference range hint */}
           {selectedLine.refUpper > 0 && !selectedLine.isLowerAbnormal && (
             <p className="text-xs text-slate-400">参考范围: {selectedLine.refLower}-{selectedLine.refUpper} {tab.unit}</p>
           )}
