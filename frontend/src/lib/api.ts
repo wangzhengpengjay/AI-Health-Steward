@@ -1,4 +1,4 @@
-import type {
+import type { ChatResponse,
   ApiResponse,
   FamilyMember,
   FamilyMemberInput,
@@ -84,3 +84,46 @@ export const metricsApi = {
 
 // ---- Exported types for convenience ----
 export type { ApiResponse, FamilyMember, MetricRecord }
+
+// ===== Chat API =====
+
+export const chatApi = {
+  send: async (memberId: number, message: string): Promise<ChatResponse> => {
+    return request<ChatResponse>(`/members/${memberId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    })
+  },
+
+  stream: async function* (
+    memberId: number,
+    message: string,
+  ): AsyncGenerator<string> {
+    const res = await fetch(`${BASE_URL}/members/${memberId}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    })
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('No response body')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (data === '[DONE]') return
+          yield data
+        }
+      }
+    }
+  },
+}

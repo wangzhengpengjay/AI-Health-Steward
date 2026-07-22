@@ -118,3 +118,28 @@ export interface PaginatedResponse<T> {
   page: number
   page_size: number
 }
+
+// ===== Chat =====
+export type RiskLevel = 'S' | 'A' | 'B' | null
+
+export interface ToolCallRecord {
+  name: string
+  arguments?: string
+  result?: unknown
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: string
+  tool_calls?: ToolCallRecord[]
+  risk_level?: RiskLevel
+  isHighRiskAlert?: boolean
+}
+
+export interface ChatResponse {
+  reply: string
+  tool_calls?: ToolCallRecord[]
+  risk_level?: RiskLevel
+  isHighRiskAlert?: boolean
+}
