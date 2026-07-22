@@ -28,11 +28,12 @@ interface MetricTab {
   color: string
   lines: MetricLine[]
   bmiConfig?: { refLower: number; refUpper: number; warningUpper: number; label: string }
+  groupInput?: boolean  // when true, all lines are entered together (e.g., blood pressure systolic+diastolic)
 }
 
 const METRIC_TABS: MetricTab[] = [
   {
-    label: '血压', unit: 'mmHg', color: '#3363FF',
+    label: '血压', unit: 'mmHg', color: '#3363FF', groupInput: true,
     lines: [
       { key: 'systolic_blood_pressure', label: '收缩压', refLower: 90, refUpper: 120, color: '#3363FF', warningUpper: 139, criticalUpper: 180, contextLabel: '测量姿势', contextOptions: ['坐位', '卧位', '站立位'] },
       { key: 'diastolic_blood_pressure', label: '舒张压', refLower: 60, refUpper: 80, color: '#5580FF', warningUpper: 89, criticalUpper: 110, contextLabel: '测量姿势', contextOptions: ['坐位', '卧位', '站立位'] },
@@ -223,24 +224,51 @@ export default function MetricInput() {
       <div className="flex-1 overflow-y-auto bg-bg-secondary p-6">
         {/* Summary cards */}
         <div className="mb-4 flex gap-4">
-          {tab.lines.slice(0, 3).map((line) => {
-            const records = allRecords[line.key] || []
-            const latest = records[0]
-            return (
-              <div key={line.key} className="flex-1 rounded-card border border-slate-200 bg-white p-4">
-                <p className="text-xs text-slate-500">{line.label}</p>
-                <p className="mt-1 text-2xl font-semibold text-slate-800">
-                  {latest ? latest.value : '--'}
-                  <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
-                </p>
-                {latest && latest.is_abnormal && (
-                  <span className="mt-1 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
-                    {line.isLowerAbnormal ? '偏低' : '偏高'}
-                  </span>
-                )}
+          {tab.groupInput ? (
+            // Group display: e.g., blood pressure shows "125/80 mmHg"
+            <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
+              <p className="text-xs text-slate-500">{tab.label}</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-800">
+                {tab.lines.map((line) => {
+                  const records = allRecords[line.key] || []
+                  return records[0]?.value ?? '--'
+                }).join(' / ')}
+                <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {tab.lines.map((line) => {
+                  const records = allRecords[line.key] || []
+                  const latest = records[0]
+                  if (!latest || !latest.is_abnormal) return null
+                  return (
+                    <span key={line.key} className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                      {line.label}{line.isLowerAbnormal ? '偏低' : '偏高'}
+                    </span>
+                  )
+                })}
               </div>
-            )
-          })}
+            </div>
+          ) : (
+            // Individual display: one card per line
+            tab.lines.slice(0, 3).map((line) => {
+              const records = allRecords[line.key] || []
+              const latest = records[0]
+              return (
+                <div key={line.key} className="flex-1 rounded-card border border-slate-200 bg-white p-4">
+                  <p className="text-xs text-slate-500">{line.label}</p>
+                  <p className="mt-1 text-2xl font-semibold text-slate-800">
+                    {latest ? latest.value : '--'}
+                    <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
+                  </p>
+                  {latest && latest.is_abnormal && (
+                    <span className="mt-1 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                      {line.isLowerAbnormal ? '偏低' : '偏高'}
+                    </span>
+                  )}
+                </div>
+              )
+            })
+          )}
           {tab.bmiConfig && (
             <div className="flex-1 rounded-card border border-slate-200 bg-white p-4">
               <p className="text-xs text-slate-500">{tab.bmiConfig.label}</p>
@@ -363,25 +391,71 @@ export default function MetricInput() {
           <div className="mt-4 rounded-card border border-slate-200 bg-white p-4">
             <h3 className="mb-3 text-sm font-medium text-slate-700">最近记录</h3>
             <div className="space-y-2">
-              {tab.lines.flatMap((line) =>
-                (allRecords[line.key] || []).slice(0, 5).map((r) => (
-                  <div key={`${line.key}-${r.id}`} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
-                    <div className="flex items-center gap-3">
-                      <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
-                      <span className="text-xs text-slate-500">{line.label}</span>
-                      <span className="text-sm font-medium text-slate-700">{r.value} {tab.unit}</span>
-                      {r.is_abnormal && (
-                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
-                          {line.isLowerAbnormal ? '偏低' : '偏高'}
-                        </span>
-                      )}
+              {tab.groupInput ? (
+                // Group records: merge by measured_at, show all lines together
+                (() => {
+                  // Collect all unique timestamps from all lines
+                  const timestamps = new Set<string>()
+                  tab.lines.forEach((line) => {
+                    (allRecords[line.key] || []).forEach((r) => timestamps.add(r.measured_at))
+                  })
+                  return [...timestamps]
+                    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
+                    .slice(0, 10)
+                    .map((ts) => {
+                      const parts = tab.lines.map((line) => {
+                        const r = (allRecords[line.key] || []).find((rec) => rec.measured_at === ts)
+                        return { line, record: r }
+                      })
+                      const firstRecord = parts.find((p) => p.record)?.record
+                      return (
+                        <div key={ts} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            {parts.map(({ line, record }) => (
+                              <div key={line.key} className="flex items-center gap-1.5">
+                                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
+                                <span className="text-xs text-slate-500">{line.label}</span>
+                                <span className="text-sm font-medium text-slate-700">
+                                  {record ? record.value : '--'}
+                                </span>
+                                {record && record.is_abnormal && (
+                                  <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-xs text-amber-600">
+                                    {line.isLowerAbnormal ? '偏低' : '偏高'}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-slate-400">
+                            {firstRecord && <span>{SOURCE_LABELS[firstRecord.source_type] || firstRecord.source_type}</span>}
+                            <span>{new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      )
+                    })
+                })()
+              ) : (
+                // Individual records
+                tab.lines.flatMap((line) =>
+                  (allRecords[line.key] || []).slice(0, 5).map((r) => (
+                    <div key={`${line.key}-${r.id}`} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
+                        <span className="text-xs text-slate-500">{line.label}</span>
+                        <span className="text-sm font-medium text-slate-700">{r.value} {tab.unit}</span>
+                        {r.is_abnormal && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                            {line.isLowerAbnormal ? '偏低' : '偏高'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-400">
+                        <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
+                        <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-400">
-                      <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
-                      <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  </div>
-                ))
+                  ))
+                )
               )}
             </div>
           </div>
@@ -395,7 +469,10 @@ export default function MetricInput() {
           selectedLineKey={addLineKey}
           onSelectLine={setAddLineKey}
           onClose={() => setShowAddModal(false)}
-          onSubmit={(data) => addMutation.mutate(data)}
+          onSubmit={(entries) => {
+            // Submit all entries sequentially (group input may have multiple)
+            entries.forEach((data) => addMutation.mutate(data))
+          }}
           isLoading={addMutation.isPending}
           error={addMutation.error instanceof ApiError ? addMutation.error.message : null}
           memberHeight={currentMember?.height}
@@ -419,19 +496,24 @@ interface AddDataModalProps {
   selectedLineKey: string
   onSelectLine: (key: string) => void
   onClose: () => void
-  onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }) => void
+  onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }[]) => void
   isLoading: boolean
   error: string | null
   memberHeight?: number  // for BMI calculation
 }
 
 function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, isLoading, error, memberHeight }: AddDataModalProps) {
+  const isGroup = !!tab.groupInput
+  const isWeightTab = !!tab.bmiConfig
+  const selectedLine = tab.lines.find((l) => l.key === selectedLineKey) || tab.lines[0]
+
+  // For group input: one value per line
+  const [groupValues, setGroupValues] = useState<Record<string, string>>({})
+  // For single input
   const [value, setValue] = useState('')
   const [height, setHeight] = useState(memberHeight?.toString() || '')
   const [measuredAt, setMeasuredAt] = useState(new Date().toISOString().slice(0, 16))
   const [context, setContext] = useState('')
-  const selectedLine = tab.lines.find((l) => l.key === selectedLineKey) || tab.lines[0]
-  const isWeightTab = !!tab.bmiConfig
 
   // Real-time BMI calculation
   const weightNum = parseFloat(value)
@@ -442,17 +524,39 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const numValue = parseFloat(value)
-    if (isNaN(numValue)) return
-    onSubmit({
-      metric_name: selectedLine.key,
-      value: numValue,
-      unit: tab.unit,
-      measured_at: new Date(measuredAt).toISOString(),
-      reference_lower: selectedLine.refLower || undefined,
-      reference_upper: selectedLine.refUpper || undefined,
-      context: context || undefined,
-    })
+    const isoTime = new Date(measuredAt).toISOString()
+    if (isGroup) {
+      // Submit all lines together with the same timestamp
+      const entries = tab.lines
+        .map((line) => {
+          const v = parseFloat(groupValues[line.key] || '')
+          if (isNaN(v)) return null
+          return {
+            metric_name: line.key,
+            value: v,
+            unit: tab.unit,
+            measured_at: isoTime,
+            reference_lower: line.refLower || undefined,
+            reference_upper: line.refUpper || undefined,
+            context: context || undefined,
+          }
+        })
+        .filter((e): e is NonNullable<typeof e> => e !== null)
+      if (entries.length === 0) return
+      onSubmit(entries)
+    } else {
+      const numValue = parseFloat(value)
+      if (isNaN(numValue)) return
+      onSubmit([{
+        metric_name: selectedLine.key,
+        value: numValue,
+        unit: tab.unit,
+        measured_at: isoTime,
+        reference_lower: selectedLine.refLower || undefined,
+        reference_upper: selectedLine.refUpper || undefined,
+        context: context || undefined,
+      }])
+    }
   }
 
   return (
@@ -465,36 +569,63 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Line selector if multiple */}
-          {tab.lines.length > 1 && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">指标项</label>
-              <select
-                value={selectedLineKey}
-                onChange={(e) => onSelectLine(e.target.value)}
-                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              >
-                {tab.lines.map((line) => (
-                  <option key={line.key} value={line.key}>{line.label}</option>
-                ))}
-              </select>
+          {/* Group input: show all lines at once (e.g., systolic + diastolic) */}
+          {isGroup ? (
+            <div className="grid grid-cols-2 gap-3">
+              {tab.lines.map((line) => (
+                <div key={line.key}>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    {line.label} ({tab.unit})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={groupValues[line.key] || ''}
+                    onChange={(e) => setGroupValues((prev) => ({ ...prev, [line.key]: e.target.value }))}
+                    className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                    placeholder={line.label}
+                    autoFocus={line === tab.lines[0]}
+                  />
+                  {line.refUpper > 0 && (
+                    <p className="mt-0.5 text-xs text-slate-400">参考: {line.refLower}-{line.refUpper}</p>
+                  )}
+                </div>
+              ))}
             </div>
+          ) : (
+            <>
+              {/* Line selector if multiple (non-group) */}
+              {tab.lines.length > 1 && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">指标项</label>
+                  <select
+                    value={selectedLineKey}
+                    onChange={(e) => onSelectLine(e.target.value)}
+                    className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  >
+                    {tab.lines.map((line) => (
+                      <option key={line.key} value={line.key}>{line.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">
+                  {selectedLine.label} ({tab.unit})
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  required
+                  autoFocus
+                  className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  placeholder={`输入${selectedLine.label}数值`}
+                />
+              </div>
+            </>
           )}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">
-              {selectedLine.label} ({tab.unit})
-            </label>
-            <input
-              type="number"
-              step="0.1"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              required
-              autoFocus
-              className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              placeholder={`输入${selectedLine.label}数值`}
-            />
-          </div>
           {/* Height input for weight/BMI tab */}
           {isWeightTab && (
             <div>
@@ -590,7 +721,7 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
             </button>
             <button
               type="submit"
-              disabled={isLoading || !value}
+              disabled={isLoading || (isGroup ? !Object.values(groupValues).some(v => v) : !value)}
               className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
             >
               {isLoading ? '保存中...' : '保存'}
