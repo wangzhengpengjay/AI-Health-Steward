@@ -67,14 +67,19 @@ class ConsultationService:
         member_id: int,
         user_message: str,
         conversation_history: list[Message] | None = None,
+        image_data_url: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str]:
         """Run a full (non-streaming) consultation turn.
 
         Returns:
             A tuple of (reply_text, tool_call_records, risk_level).
         """
-        provider = self.router.get_text_provider()
-        messages = self._build_messages(user_message, conversation_history)
+        has_vision = image_data_url is not None
+        if has_vision:
+            provider = self.router.get_multimodal_provider()
+        else:
+            provider = self.router.get_text_provider()
+        messages = self._build_messages(user_message, conversation_history, image_data_url)
         tool_defs = self.tools.get_all_tool_definitions()
 
         tool_call_records: list[dict[str, Any]] = []
@@ -134,14 +139,19 @@ class ConsultationService:
         member_id: int,
         user_message: str,
         conversation_history: list[Message] | None = None,
+        image_data_url: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream the final reply as content deltas (for SSE).
 
         Tool-calling rounds are performed non-streaming; only the final
         response is streamed to the client.
         """
-        provider = self.router.get_text_provider()
-        messages = self._build_messages(user_message, conversation_history)
+        has_vision = image_data_url is not None
+        if has_vision:
+            provider = self.router.get_multimodal_provider()
+        else:
+            provider = self.router.get_text_provider()
+        messages = self._build_messages(user_message, conversation_history, image_data_url)
         tool_defs = self.tools.get_all_tool_definitions()
 
         max_rounds = 5
@@ -196,12 +206,24 @@ class ConsultationService:
     # ------------------------------------------------------------------
 
     def _build_messages(
-        self, user_message: str, history: list[Message] | None
+        self,
+        user_message: str,
+        history: list[Message] | None,
+        image_data_url: str | None = None,
     ) -> list[Message]:
         messages: list[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
         if history:
             messages.extend(history)
-        messages.append(Message(role="user", content=user_message))
+
+        if image_data_url:
+            # Multimodal message: text + image
+            content = [
+                {"type": "text", "text": user_message},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]
+            messages.append(Message(role="user", content=content))
+        else:
+            messages.append(Message(role="user", content=user_message))
         return messages
 
     async def _execute_tool_call(

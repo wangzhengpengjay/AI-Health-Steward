@@ -88,21 +88,32 @@ export type { ApiResponse, FamilyMember, MetricRecord }
 // ===== Chat API =====
 
 export const chatApi = {
-  send: async (memberId: number, message: string): Promise<ChatResponse> => {
-    return request<ChatResponse>(`/members/${memberId}/chat`, {
+  send: async (memberId: number, message: string, file?: File): Promise<ChatResponse> => {
+    const formData = new FormData()
+    formData.append('message', message)
+    if (file) formData.append('file', file)
+    const res = await fetch(`${BASE_URL}/members/${memberId}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: formData,
     })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status)
+    }
+    return res.json()
   },
 
   stream: async function* (
     memberId: number,
     message: string,
+    file?: File,
   ): AsyncGenerator<string> {
+    const formData = new FormData()
+    formData.append('message', message)
+    if (file) formData.append('file', file)
     const res = await fetch(`${BASE_URL}/members/${memberId}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: formData,
     })
     if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
 

@@ -97,7 +97,7 @@ class MultimodalAPIProvider(ModelProvider):
         if stream:
             return self._stream_chat(payload, headers)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
@@ -130,7 +130,7 @@ class MultimodalAPIProvider(ModelProvider):
         self, payload: dict, headers: dict
     ) -> AsyncIterator[str]:
         payload["stream"] = True
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
@@ -152,7 +152,7 @@ class MultimodalAPIProvider(ModelProvider):
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/models",
                     headers={"Authorization": f"Bearer {self.api_key}"},
