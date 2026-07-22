@@ -119,9 +119,18 @@ export const chatApi = {
       buffer = lines.pop() ?? ''
       for (const line of lines) {
         if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') return
-          yield data
+          const raw = line.slice(6)
+          if (raw === '[DONE]') return
+          try {
+            const parsed = JSON.parse(raw)
+            if (parsed.delta) {
+              yield parsed.delta
+            } else if (parsed.error) {
+              throw new Error(parsed.error)
+            }
+          } catch {
+            // Not JSON, skip
+          }
         }
       }
     }

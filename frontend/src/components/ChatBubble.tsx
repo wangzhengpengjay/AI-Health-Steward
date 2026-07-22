@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '@/types'
 
 const RISK_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -62,8 +64,16 @@ export default function ChatBubble({ message, isStreaming }: ChatBubbleProps) {
 
         {/* Message content */}
         <div className={`text-sm leading-relaxed ${isUser ? 'text-white' : 'text-slate-800'}`}>
-          {message.content}
-          {isStreaming && <span className="inline-block w-1.5 h-4 ml-0.5 bg-current animate-pulse" />}
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          ) : (
+            <div className="prose prose-sm max-w-none prose-headings:my-1 prose-p:my-1 prose-li:my-0 prose-table:text-xs prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-th:bg-slate-50 prose-pre:bg-slate-50 prose-pre:text-xs">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+              {isStreaming && <span className="inline-block w-1.5 h-4 ml-0.5 bg-primary animate-pulse" />}
+            </div>
+          )}
         </div>
 
         {/* Risk label */}
