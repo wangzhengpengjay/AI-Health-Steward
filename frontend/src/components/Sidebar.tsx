@@ -12,7 +12,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/chat', label: 'AI 咨询', icon: 'forum' },
   { to: '/reports', label: '报告管理', icon: 'description' },
   { to: '/members', label: '成员管理', icon: 'group' },
-  { to: '/metric-input', label: '手动录入', icon: 'edit_note' },
+  { to: '/metric-input', label: '健康指标', icon: 'monitoring' },
   { to: '/settings', label: '设置', icon: 'settings' },
 ]
 

@@ -81,7 +81,7 @@ export default function Chat() {
 
     try {
       let fullContent = ''
-      for await (const chunk of chatApi.stream(currentMemberId, userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
+      for await (const chunk of chatApi.stream(Number(currentMemberId), userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
         fullContent += chunk
         setStreamingContent(fullContent)
       }

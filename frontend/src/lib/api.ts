@@ -72,6 +72,9 @@ export const metricsApi = {
   list: (memberId: string) =>
     request<MetricRecord[]>(`/members/${memberId}/metrics`),
 
+  getByName: (memberId: string, metricName: string) =>
+    request<MetricRecord[]>(`/members/${memberId}/metrics/${metricName}`),
+
   create: (memberId: string, data: MetricRecordInput) =>
     request<MetricRecord>(`/members/${memberId}/metrics`, {
       method: 'POST',

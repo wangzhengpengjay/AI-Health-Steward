@@ -48,23 +48,31 @@ export type MetricName =
 export type MetricUnit = string
 
 export interface MetricRecord {
-  id: string
-  member_id: string
-  metric_name: MetricName
+  id: number
+  member_id: number
+  metric_name: string
   value: number
-  unit: MetricUnit
-  recorded_at: string // ISO datetime
+  unit: string
+  reference_lower?: number
+  reference_upper?: number
+  is_abnormal: boolean
+  is_critical: boolean
+  measured_at: string // ISO datetime
+  context?: string
   source_type: SourceType
-  source_ref?: string // original report file reference if from report
-  note?: string
   created_at: string
-  updated_at: string
 }
 
-export type MetricRecordInput = Omit<
-  MetricRecord,
-  'id' | 'member_id' | 'created_at' | 'updated_at'
->
+export interface MetricRecordInput {
+  metric_name: string
+  value: number
+  unit: string
+  measured_at: string
+  reference_lower?: number
+  reference_upper?: number
+  context?: string
+  source_type: SourceType
+}
 
 // Field family C: diagnosis
 export interface DiagnosisRecord {
