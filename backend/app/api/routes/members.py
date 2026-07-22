@@ -38,7 +38,7 @@ async def create_member(
     db.add(member)
     await db.flush()
     await db.refresh(member)
-    return member
+    return _to_response(member)
 
 
 @router.get("", response_model=List[FamilyMemberResponse])
@@ -117,10 +117,13 @@ async def _get_member_or_404(db: AsyncSession, member_id: int) -> FamilyMember:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"FamilyMember {member_id} not found",
         )
+    return member
+
+def _to_response(m: FamilyMember) -> FamilyMemberResponse:
     return FamilyMemberResponse(
-            id=member.id, name=member.name, gender=member.gender,
-            birth_date=member.birth_date, height=member.height,
-            weight=member.weight, bmi=member.bmi, blood_type=member.blood_type,
-            relationship=member.member_relation,
-            created_at=member.created_at, updated_at=member.updated_at,
-        )
+        id=m.id, name=m.name, gender=m.gender,
+        birth_date=m.birth_date, height=m.height,
+        weight=m.weight, bmi=m.bmi, blood_type=m.blood_type,
+        relationship=m.member_relation,
+        created_at=m.created_at, updated_at=m.updated_at,
+    )

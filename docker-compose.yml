@@ -43,6 +43,7 @@ services:
       - "5173:5173"
     volumes:
       - ./frontend/src:/app/src
+      - ./frontend/vite.config.ts:/app/vite.config.ts
     depends_on:
       - backend
     command: npm run dev -- --host 0.0.0.0

@@ -1,10 +1,12 @@
-import { useState, useRef } from 'react'
+import { useState, useMemo } from 'react'
+import ReportConfirmModal from '@/components/ReportConfirmModal'
+import { ExamTimeline, LabTabContent, SOURCE_LABELS } from '@/components/MetricViews'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ComposedChart,
 } from 'recharts'
-import { metricsApi, chatApi, ApiError } from '@/lib/api'
+import { metricsApi, ApiError } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 import type { MetricRecord, SourceType } from '@/types'
 
@@ -31,6 +33,16 @@ interface MetricTab {
   groupInput?: boolean  // when true, all lines are entered together (e.g., blood pressure systolic+diastolic)
 }
 
+interface DynamicTab {
+  type: 'lab' | 'exam'
+  label: string
+  unit: string
+  color?: string
+  lines: { key: string; label: string; refLower: number; refUpper: number; color: string; warningUpper: number; criticalUpper: number; isLowerAbnormal?: boolean; contextOptions?: string[]; contextLabel?: string }[]
+  bmiConfig?: { refLower: number; refUpper: number; warningUpper: number; label: string }
+  groupInput?: boolean
+}
+
 const METRIC_TABS: MetricTab[] = [
   {
     label: '血压', unit: 'mmHg', color: '#3363FF', groupInput: true,
@@ -42,17 +54,11 @@ const METRIC_TABS: MetricTab[] = [
   {
     label: '血糖', unit: 'mmol/L', color: '#0891B2',
     lines: [
-      { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1, contextLabel: '测量场景', contextOptions: ['空腹（8h以上未进食）', '餐前', '睡前'] },
-      { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7, contextLabel: '餐后时间', contextOptions: ['餐后1h', '餐后2h', '餐后3h'] },
-    ],
-  },
-  {
-    label: '血脂', unit: 'mmol/L', color: '#059669',
-    lines: [
-      { key: 'total_cholesterol', label: '总胆固醇 TC', refLower: 0, refUpper: 5.2, color: '#059669', warningUpper: 6.2, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
-      { key: 'triglycerides', label: '甘油三酯 TG', refLower: 0, refUpper: 1.7, color: '#0891B2', warningUpper: 2.3, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
-      { key: 'ldl_cholesterol', label: '低密度脂蛋白 LDL-C', refLower: 0, refUpper: 3.4, color: '#E6A23C', warningUpper: 4.1, criticalUpper: 0, contextLabel: '测量条件', contextOptions: ['空腹12h'] },
-      { key: 'hdl_cholesterol', label: '高密度脂蛋白 HDL-C', refLower: 1.0, refUpper: 0, color: '#3363FF', warningUpper: 0, criticalUpper: 0, isLowerAbnormal: true },
+      { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1 },
+      { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7 },
+      { key: 'random_glucose', label: '随机血糖', refLower: 3.9, refUpper: 11.1, color: '#06B6D4', warningUpper: 11.1, criticalUpper: 16.7 },
+      { key: 'postmeal_1h_glucose', label: '餐后1h血糖', refLower: 3.9, refUpper: 8.9, color: '#14B8A6', warningUpper: 11.1, criticalUpper: 16.7 },
+      { key: 'bedtime_glucose', label: '睡前血糖', refLower: 3.9, refUpper: 8.0, color: '#0EA5E9', warningUpper: 10.0, criticalUpper: 16.7 },
     ],
   },
   {
@@ -70,38 +76,96 @@ const METRIC_TABS: MetricTab[] = [
   },
 ]
 
-const SOURCE_LABELS: Record<string, string> = {
-  manual: '手动录入',
-  report: '报告导入',
-  chat_extract: '聊天抽取',
-}
-
 export default function MetricInput() {
   const { currentMemberId, members } = useMemberStore()
   const [activeTab, setActiveTab] = useState(0)
   const [showAddModal, setShowAddModal] = useState(false)
-  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [showReportModal, setShowReportModal] = useState(false)
   const [addLineKey, setAddLineKey] = useState<string>('')
+  const [editRecord, setEditRecord] = useState<{ groupTs?: string; lineKey?: string; record?: MetricRecord } | null>(null)
   const queryClient = useQueryClient()
 
   const currentMember = members.find((m) => m.id === currentMemberId)
-  const tab = METRIC_TABS[activeTab]
+
+  // Fetch all metrics for dynamic tabs
+  const { data: allMemberMetrics = [] } = useQuery({
+    queryKey: ['metrics', currentMemberId, 'all'],
+    queryFn: () => metricsApi.list(Number(currentMemberId)),
+    enabled: !!currentMemberId,
+  })
+
+  // Build dynamic tabs: lab:* grouped by report_name, exam:* grouped by category
+  const dynamicTabs = useMemo(() => {
+    const labReports: Record<string, string[]> = {}  // report_name -> test_names
+    const examCategories: Record<string, string[]> = {}  // category -> items
+    for (const r of allMemberMetrics) {
+      if (r.metric_name.startsWith('lab:')) {
+        const parts = r.metric_name.split(':')
+        const reportName = parts[1] || '检验报告'
+        const testName = parts[2] || '指标'
+        if (!labReports[reportName]) labReports[reportName] = []
+        if (!labReports[reportName].includes(testName)) labReports[reportName].push(testName)
+      } else if (r.metric_name.startsWith('exam:')) {
+        const parts = r.metric_name.split(':')
+        const category = parts[1] || '检查发现'
+        const item = parts[2] || '结果'
+        if (!examCategories[category]) examCategories[category] = []
+        if (!examCategories[category].includes(item)) examCategories[category].push(item)
+      }
+    }
+    const tabs: DynamicTab[] = []
+    for (const [reportName, testNames] of Object.entries(labReports)) {
+      tabs.push({
+        type: 'lab',
+        label: reportName,
+        unit: '',
+        lines: testNames.map(tn => ({
+          key: `lab:${reportName}:${tn}`,
+          label: tn,
+          refLower: 0, refUpper: 0, color: '#059669', warningUpper: 0, criticalUpper: 0,
+        })),
+      })
+    }
+    for (const [category, items] of Object.entries(examCategories)) {
+      tabs.push({
+        type: 'exam',
+        label: category,
+        unit: '',
+        lines: items.map(item => ({
+          key: `exam:${category}:${item}`,
+          label: item,
+          refLower: 0, refUpper: 0, color: '#E6A23C', warningUpper: 0, criticalUpper: 0,
+        })),
+      })
+    }
+    return tabs
+  }, [allMemberMetrics])
+
+  const allTabs = [...METRIC_TABS, ...dynamicTabs]
+  const tab: MetricTab | DynamicTab = allTabs[activeTab] || METRIC_TABS[0]
 
   // Fetch all metric lines' data for this tab
   const { data: allRecords = {}, isLoading } = useQuery({
     queryKey: ['metrics', currentMemberId, activeTab],
     queryFn: async () => {
       const results: Record<string, MetricRecord[]> = {}
-      await Promise.all(
-        tab.lines.map(async (line) => {
-          try {
-            const records = await metricsApi.getByName(String(currentMemberId), line.key)
-            results[line.key] = records
-          } catch {
-            results[line.key] = []
-          }
-        })
-      )
+      // For dynamic tabs, filter from allMemberMetrics
+      if ('type' in tab && (tab.type === 'lab' || tab.type === 'exam')) {
+        for (const line of tab.lines) {
+          results[line.key] = allMemberMetrics.filter(r => r.metric_name === line.key)
+        }
+      } else {
+        await Promise.all(
+          tab.lines.map(async (line) => {
+            try {
+              const records = await metricsApi.getByName(String(currentMemberId), line.key)
+              results[line.key] = records
+            } catch {
+              results[line.key] = []
+            }
+          })
+        )
+      }
       return results
     },
     enabled: !!currentMemberId,
@@ -113,6 +177,22 @@ export default function MetricInput() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['metrics', currentMemberId] })
       setShowAddModal(false)
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (data: { id: number; value: number; measured_at: string; context?: string }) =>
+      metricsApi.update(data.id, { value: data.value, measured_at: data.measured_at, context: data.context }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['metrics', currentMemberId] })
+      setEditRecord(null)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => metricsApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['metrics', currentMemberId] })
     },
   })
 
@@ -160,13 +240,28 @@ export default function MetricInput() {
     }
   }
 
-  // Count abnormals
+  // Count records: for group tabs, count by unique timestamp (one group = one record)
   let totalRecords = 0
   let abnormalCount = 0
-  Object.values(allRecords).forEach((records) => {
-    totalRecords += records.length
-    abnormalCount += records.filter((r) => r.is_abnormal).length
-  })
+  if (tab.groupInput) {
+    const timestamps = new Set<string>()
+    tab.lines.forEach((line) => {
+      (allRecords[line.key] || []).forEach((r) => timestamps.add(r.measured_at))
+    })
+    totalRecords = timestamps.size
+    // Abnormal if any line in the group is abnormal
+    abnormalCount = [...timestamps].filter((ts) =>
+      tab.lines.some((line) => {
+        const r = (allRecords[line.key] || []).find((rec) => rec.measured_at === ts)
+        return r?.is_abnormal
+      })
+    ).length
+  } else {
+    Object.values(allRecords).forEach((records) => {
+      totalRecords += records.length
+      abnormalCount += records.filter((r) => r.is_abnormal).length
+    })
+  }
 
   const handleAddClick = () => {
     setAddLineKey(tab.lines[0].key)
@@ -188,7 +283,7 @@ export default function MetricInput() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setShowUploadModal(true)}
+            onClick={() => setShowReportModal(true)}
             className="flex items-center gap-1.5 rounded-field border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:border-primary hover:text-primary"
           >
             <span className="material-symbols-rounded text-lg">attach_file</span>
@@ -206,7 +301,7 @@ export default function MetricInput() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-slate-200 bg-white px-6">
-        {METRIC_TABS.map((t, i) => (
+        {allTabs.map((t, i) => (
           <button
             key={i}
             onClick={() => setActiveTab(i)}
@@ -222,7 +317,11 @@ export default function MetricInput() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto bg-bg-secondary p-6">
-        {/* Summary cards */}
+        {/* Lab tab: per-test charts */}
+        {'type' in tab && tab.type === 'lab' && <LabTabContent allRecords={allRecords} tabLabel={tab.label} />}
+
+        {/* Summary cards (skip for exam/lab tabs) */}
+        {'type' in tab && (tab.type === 'exam' || tab.type === 'lab') ? null : (
         <div className="mb-4 flex gap-4">
           {tab.groupInput ? (
             // Group display: e.g., blood pressure shows "125/80 mmHg"
@@ -299,9 +398,15 @@ export default function MetricInput() {
             </p>
           </div>
         </div>
+        )}
 
-        {/* Chart */}
+        {/* Chart or Timeline (skip for lab) */}
+        {'type' in tab && tab.type === 'lab' ? null : (
         <div className="rounded-card border border-slate-200 bg-white p-6">
+          {'type' in tab && tab.type === 'exam' ? (
+            <ExamTimeline allRecords={allRecords} tabLabel={tab.label} />
+          ) : (
+          <>
           <h3 className="mb-4 text-sm font-medium text-slate-700">{tab.label}趋势图</h3>
           {isLoading ? (
             <div className="flex h-64 items-center justify-center">
@@ -384,10 +489,13 @@ export default function MetricInput() {
               </div>
             ))}
           </div>
+          </>
+          )}
         </div>
+        )}
 
-        {/* Recent records */}
-        {totalRecords > 0 && (
+        {/* Recent records (skip for exam/lab tabs) */}
+        {'type' in tab && (tab.type === 'exam' || tab.type === 'lab') ? null : totalRecords > 0 && (
           <div className="mt-4 rounded-card border border-slate-200 bg-white p-4">
             <h3 className="mb-3 text-sm font-medium text-slate-700">最近记录</h3>
             <div className="space-y-2">
@@ -426,9 +534,33 @@ export default function MetricInput() {
                               </div>
                             ))}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-slate-400">
-                            {firstRecord && <span>{SOURCE_LABELS[firstRecord.source_type] || firstRecord.source_type}</span>}
-                            <span>{new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                              {firstRecord && <span>{SOURCE_LABELS[firstRecord.source_type] || firstRecord.source_type}</span>}
+                              <span>{new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setEditRecord({ groupTs: ts })}
+                                className="rounded p-1 text-slate-400 transition hover:bg-slate-200 hover:text-primary"
+                                title="编辑"
+                              >
+                                <span className="material-symbols-rounded text-base">edit</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm('确认删除该组记录？')) {
+                                    parts.forEach(({ record }) => {
+                                      if (record) deleteMutation.mutate(record.id)
+                                    })
+                                  }
+                                }}
+                                className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                                title="删除"
+                              >
+                                <span className="material-symbols-rounded text-base">delete</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )
@@ -437,7 +569,7 @@ export default function MetricInput() {
               ) : (
                 // Individual records
                 tab.lines.flatMap((line) =>
-                  (allRecords[line.key] || []).slice(0, 5).map((r) => (
+                  (allRecords[line.key] || []).slice(0, 10).map((r) => (
                     <div key={`${line.key}-${r.id}`} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2">
                       <div className="flex items-center gap-3">
                         <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
@@ -449,9 +581,29 @@ export default function MetricInput() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
-                        <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                          <span>{SOURCE_LABELS[r.source_type] || r.source_type}</span>
+                          <span>{new Date(r.measured_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setEditRecord({ lineKey: line.key, record: r })}
+                            className="rounded p-1 text-slate-400 transition hover:bg-slate-200 hover:text-primary"
+                            title="编辑"
+                          >
+                            <span className="material-symbols-rounded text-base">edit</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm('确认删除该记录？')) deleteMutation.mutate(r.id)
+                            }}
+                            className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                            title="删除"
+                          >
+                            <span className="material-symbols-rounded text-base">delete</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -465,7 +617,7 @@ export default function MetricInput() {
       {/* Add data modal */}
       {showAddModal && (
         <AddDataModal
-          tab={tab}
+          tab={tab as MetricTab}
           selectedLineKey={addLineKey}
           onSelectLine={setAddLineKey}
           onClose={() => setShowAddModal(false)}
@@ -479,11 +631,25 @@ export default function MetricInput() {
         />
       )}
 
+      {/* Edit modal */}
+      {editRecord && (
+        <EditModal
+          tab={tab as MetricTab}
+          editData={editRecord}
+          allRecords={allRecords}
+          onClose={() => setEditRecord(null)}
+          onSubmit={(entries) => {
+            entries.forEach((e) => updateMutation.mutate(e))
+          }}
+          isLoading={updateMutation.isPending}
+        />
+      )}
+
       {/* Upload modal */}
-      {showUploadModal && (
-        <UploadModal
-          memberId={Number(currentMemberId)}
-          onClose={() => setShowUploadModal(false)}
+      {showReportModal && (
+        <ReportConfirmModal
+          onClose={() => setShowReportModal(false)}
+          
         />
       )}
     </div>
@@ -733,132 +899,165 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
   )
 }
 
-// ---- Upload Modal ----
-interface UploadModalProps {
-  memberId: number
+// ---- Edit Modal ----
+interface EditModalProps {
+  tab: MetricTab
+  editData: { groupTs?: string; lineKey?: string; record?: MetricRecord }
+  allRecords: Record<string, MetricRecord[]>
   onClose: () => void
+  onSubmit: (data: { id: number; value: number; measured_at: string; context?: string }[]) => void
+  isLoading: boolean
 }
 
-function UploadModal({ memberId, onClose }: UploadModalProps) {
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [message, setMessage] = useState('请帮我解读这份报告并提取指标数据')
-  const [result, setResult] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+function EditModal({ tab, editData, allRecords, onClose, onSubmit, isLoading }: EditModalProps) {
+  const isGroup = !!editData.groupTs
+  const ts = editData.groupTs
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-    if (!validTypes.includes(f.type)) {
-      setError('仅支持 JPG/PNG/WebP/PDF')
-      return
-    }
-    setFile(f)
-    setError(null)
-    if (f.type.startsWith('image/')) {
-      setPreviewUrl(URL.createObjectURL(f))
-    } else {
-      setPreviewUrl(null)
-    }
-  }
+  // For group edit: collect all line records at this timestamp
+  const groupRecords = isGroup
+    ? tab.lines.map((line) => ({
+        line,
+        record: (allRecords[line.key] || []).find((r) => r.measured_at === ts),
+      })).filter((p) => p.record)
+    : [{ line: tab.lines.find((l) => l.key === editData.lineKey)!, record: editData.record! }]
 
-  const handleSubmit = async () => {
-    if (!file) return
-    setIsLoading(true)
-    setError(null)
-    setResult(null)
-    try {
-      const res = await chatApi.send(memberId, message, file)
-      setResult(res.reply)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI 服务暂时不可用')
-    } finally {
-      setIsLoading(false)
-    }
+  // Initialize state from existing records
+  const [groupValues, setGroupValues] = useState<Record<string, string>>(() => {
+    const vals: Record<string, string> = {}
+    groupRecords.forEach(({ line, record }) => {
+      if (record) vals[line.key] = record.value.toString()
+    })
+    return vals
+  })
+  const [measuredAt, setMeasuredAt] = useState(() => {
+    const r = groupRecords[0]?.record
+    return r ? new Date(r.measured_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)
+  })
+  const [context, setContext] = useState(() => {
+    const r = groupRecords[0]?.record
+    return r?.context || ''
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const isoTime = new Date(measuredAt).toISOString()
+    const entries = groupRecords
+      .map(({ line, record }) => {
+        const v = parseFloat(groupValues[line.key] || '')
+        if (isNaN(v) || !record) return null
+        return { id: record.id, value: v, measured_at: isoTime, context: context || undefined }
+      })
+      .filter((e): e is NonNullable<typeof e> => e !== null)
+    if (entries.length === 0) return
+    onSubmit(entries)
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="max-h-[85vh] w-[480px] overflow-y-auto rounded-card bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="w-96 rounded-card bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-medium text-slate-800">上传报告</h2>
+          <h2 className="text-base font-medium text-slate-800">编辑{tab.label}数据</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <span className="material-symbols-rounded">close</span>
           </button>
         </div>
-
-        {!result && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className="mb-4 flex cursor-pointer flex-col items-center justify-center rounded-field border-2 border-dashed border-slate-200 py-8 transition hover:border-primary hover:bg-primary-light/30"
-            >
-              {previewUrl ? (
-                <img src={previewUrl} alt="预览" className="max-h-32 rounded-field object-contain" />
-              ) : file ? (
-                <div className="flex items-center gap-2 text-slate-600">
-                  <span className="material-symbols-rounded">description</span>
-                  <span className="text-sm">{file.name}</span>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {isGroup ? (
+            <div className="grid grid-cols-2 gap-3">
+              {groupRecords.map(({ line }) => (
+                <div key={line.key}>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    {line.label} ({tab.unit})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={groupValues[line.key] || ''}
+                    onChange={(e) => setGroupValues((prev) => ({ ...prev, [line.key]: e.target.value }))}
+                    className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                    placeholder={line.label}
+                  />
+                  {line.refUpper > 0 && (
+                    <p className="mt-0.5 text-xs text-slate-400">参考: {line.refLower}-{line.refUpper}</p>
+                  )}
                 </div>
-              ) : (
-                <>
-                  <span className="material-symbols-rounded text-3xl text-slate-300">cloud_upload</span>
-                  <p className="mt-2 text-sm text-slate-500">点击选择图片或 PDF</p>
-                  <p className="mt-1 text-xs text-slate-400">支持 JPG/PNG/WebP/PDF，最大 20MB</p>
-                </>
+              ))}
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                {groupRecords[0].line.label} ({tab.unit})
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                value={groupValues[groupRecords[0].line.key] || ''}
+                onChange={(e) => setGroupValues((prev) => ({ ...prev, [groupRecords[0].line.key]: e.target.value }))}
+                required
+                autoFocus
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              />
+              {groupRecords[0].line.refUpper > 0 && (
+                <p className="mt-0.5 text-xs text-slate-400">参考: {groupRecords[0].line.refLower}-{groupRecords[0].line.refUpper}</p>
               )}
             </div>
-
-            <div className="mb-4">
-              <label className="mb-1 block text-xs font-medium text-slate-500">解读要求 (可选)</label>
+          )}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">测量时间</label>
+            <input
+              type="datetime-local"
+              value={measuredAt}
+              onChange={(e) => setMeasuredAt(e.target.value)}
+              className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          {groupRecords[0]?.line.contextOptions ? (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                {groupRecords[0].line.contextLabel || '备注'} (可选)
+              </label>
+              <select
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              >
+                <option value="">请选择</option>
+                {groupRecords[0].line.contextOptions.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">备注 (可选)</label>
               <input
                 type="text"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
                 className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
               />
             </div>
-
-            {error && <p className="mb-3 text-sm text-red-500">{error}</p>}
-
+          )}
+          <div className="flex gap-3 pt-2">
             <button
-              onClick={handleSubmit}
-              disabled={!file || isLoading}
-              className="w-full rounded-field bg-primary py-2.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
-            >
-              {isLoading ? 'AI 解读中...' : '上传并解读'}
-            </button>
-          </>
-        )}
-
-        {result && (
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-sm text-green-600">
-              <span className="material-symbols-rounded">check_circle</span>
-              AI 解读完成
-            </div>
-            <div className="prose prose-sm max-w-none rounded-field bg-slate-50 p-4">
-              <div className="whitespace-pre-wrap text-sm text-slate-700">{result}</div>
-            </div>
-            <button
+              type="button"
               onClick={onClose}
-              className="mt-4 w-full rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover"
+              className="flex-1 rounded-field border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50"
             >
-              完成
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
+            >
+              {isLoading ? '保存中...' : '保存'}
             </button>
           </div>
-        )}
+        </form>
       </div>
     </div>
   )
 }
+
+// ---- Exam Timeline (for exam:* tabs) ----

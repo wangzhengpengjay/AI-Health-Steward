@@ -82,7 +82,13 @@ export const metricsApi = {
     }),
 
   delete: (id: number) =>
-    request<void>(`/metrics/${id}`, { method: 'DELETE' }),
+    request<void>(`/members/metrics/${id}`, { method: 'DELETE' }),
+
+  update: (id: number, data: Partial<MetricRecordInput>) =>
+    request<MetricRecord>(`/members/metrics/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 }
 
 // ---- Exported types for convenience ----
@@ -149,4 +155,141 @@ export const chatApi = {
       }
     }
   },
+}
+
+// ---- Health Profile (diagnoses, medications, allergies) ----
+
+export interface DiagnosisItem {
+  id: number
+  disease_name: string
+  icd_code?: string
+  diagnosed_date?: string
+  severity?: string
+  status: string
+}
+
+export interface MedicationItem {
+  id: number
+  drug_name: string
+  generic_name?: string
+  dosage: string
+  frequency: string
+  route: string
+  start_date?: string
+  end_date?: string
+}
+
+export interface AllergyItem {
+  id: number
+  type: string
+  name: string
+  severity: string
+  recorded_at?: string
+}
+
+export interface ProfileSummary {
+  diagnoses: DiagnosisItem[]
+  medications: MedicationItem[]
+  allergies: AllergyItem[]
+}
+
+export const profileApi = {
+  get: (memberId: number) =>
+    request<ProfileSummary>(`/members/${memberId}/profile`),
+
+  addDiagnosis: (memberId: number, data: { disease_name: string; severity?: string; diagnosed_date?: string; status?: string }) =>
+    request<DiagnosisItem>(`/members/${memberId}/profile/diagnoses`, { method: 'POST', body: JSON.stringify(data) }),
+
+  addMedication: (memberId: number, data: { drug_name: string; dosage: string; frequency: string; start_date?: string }) =>
+    request<MedicationItem>(`/members/${memberId}/profile/medications`, { method: 'POST', body: JSON.stringify(data) }),
+
+  addAllergy: (memberId: number, data: { type: string; name: string; severity?: string }) =>
+    request<AllergyItem>(`/members/${memberId}/profile/allergies`, { method: 'POST', body: JSON.stringify(data) }),
+
+  deleteRecord: (recordType: string, recordId: number) =>
+    request<void>(`/members/profile/records/${recordType}/${recordId}`, { method: 'DELETE' }),
+}
+
+// ---- Report Extraction ----
+
+export interface ExtractedMetric {
+  metric_name: string
+  label: string
+  value: number
+  unit?: string
+  reference_lower?: number
+  reference_upper?: number
+  is_abnormal: boolean
+}
+
+export interface ExtractedDiagnosis {
+  disease_name: string
+  severity?: string
+  diagnosed_date?: string
+}
+
+export interface ExtractedMedication {
+  drug_name: string
+  dosage: string
+  frequency: string
+}
+
+export interface ExtractedLabTest {
+  report_name: string
+  test_name: string
+  value: number
+  unit?: string
+  reference_lower?: number
+  reference_upper?: number
+  is_abnormal: boolean
+}
+
+export interface ExtractedExamFinding {
+  finding_category: string
+  finding_desc: string
+  value_num?: number | null
+  unit?: string
+  conclusion?: string
+}
+
+export interface ExtractionResult {
+  patient_name?: string
+  report_type?: string
+  report_date?: string
+  metrics: ExtractedMetric[]
+  diagnoses: ExtractedDiagnosis[]
+  medications: ExtractedMedication[]
+  lab_tests: ExtractedLabTest[]
+  exam_findings: ExtractedExamFinding[]
+  summary?: string
+}
+
+export const reportsApi = {
+  extract: async (memberId: number, file: File): Promise<ExtractionResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${BASE_URL}/members/${memberId}/reports/extract`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status)
+    }
+    return res.json()
+  },
+
+  confirm: (memberId: number, data: {
+    extraction: ExtractionResult
+    file_name?: string
+    keep_metric_indices?: number[]
+    keep_diagnosis_indices?: number[]
+    keep_medication_indices?: number[]
+    keep_lab_test_indices?: number[]
+    keep_exam_finding_indices?: number[]
+  }) =>
+    request<{ saved_metrics: number; saved_diagnoses: number; saved_medications: number; saved_lab_tests: number; saved_exam_findings: number }>(
+      `/members/${memberId}/reports/confirm`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
 }

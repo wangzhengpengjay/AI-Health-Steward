@@ -20,7 +20,7 @@
 ### 前置要求
 
 - Docker 20.10+ 和 docker-compose v2+
-- 模型 API Key（OpenAI / 讯飞星火 / DeepSeek 等兼容接口）
+- 模型 API Key（OpenAI 兼容接口，支持 GPT-4o / DeepSeek 等）
 - 最低配置：2 核 CPU / 2GB 内存 / 10GB 磁盘
 
 ### 部署
@@ -91,9 +91,9 @@ ai-health-steward/
 
 | 版本 | 目标 | 状态 |
 |------|------|------|
-| V0.1 | 项目骨架与数据地基 — 能存数据、能看画像 | 开发中 |
-| V0.2 | AI 咨询能力 — 意图路由、工具调用、对话界面 | 规划中 |
-| V0.3 | 报告导入与可视化 — 多模态抽取、趋势图、画像看板 | 规划中 |
+| V0.1 | 项目骨架与数据地基 — 能存数据、能看画像 | ✅ 已完成 |
+| V0.2 | AI 咨询能力 — 意图路由、工具调用、对话界面 | ✅ 已完成 |
+| V0.3 | 报告导入与可视化 — 多模态抽取、趋势图、画像看板 | 🔧 开发中 |
 | V0.4 | 飞书渠道 — 资料收集、轻问答 | 规划中 |
 | V1.0 | 开源发布 — 文档完善、一键部署 | 规划中 |
 
@@ -104,11 +104,11 @@ ai-health-steward/
 - **数据导出**：用户可随时导出全部健康数据（JSON 格式）
 - **数据删除**：支持单条记录删除和整成员删除（软删除 30 天后硬删除）
 
-详见 [隐私声明文档](docs/PRIVACY.md)（待完善）。
+详见 [隐私声明](PRIVACY.md)。
 
 ## 贡献
 
-欢迎提交 Issue 和 PR。请先阅读 [需求文档](openspec/changes/ai-health-steward/proposal.md) 了解项目方向。
+欢迎提交 Issue 和 PR。请先阅读 [贡献指南](CONTRIBUTING.md) 和 [需求文档](openspec/changes/ai-health-steward/proposal.md) 了解项目方向。
 
 ## License
 

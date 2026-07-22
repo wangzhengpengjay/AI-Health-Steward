@@ -40,6 +40,30 @@ class MetricRecordCreate(MetricRecordBase):
         return self
 
 
+class MetricRecordUpdate(BaseModel):
+    """Partial update for a metric record. Re-computes abnormal/critical."""
+    value: Optional[float] = None
+    unit: Optional[str] = Field(None, max_length=32)
+    reference_lower: Optional[float] = None
+    reference_upper: Optional[float] = None
+    measured_at: Optional[datetime] = None
+    context: Optional[str] = Field(None, max_length=64)
+
+    @model_validator(mode="after")
+    def _recompute_abnormal(self) -> "MetricRecordUpdate":
+        if self.value is not None and self.reference_lower is not None and self.reference_upper is not None:
+            self.is_abnormal = not (self.reference_lower <= self.value <= self.reference_upper)
+            self.is_critical = bool(
+                self.is_abnormal
+                and (
+                    self.value < self.reference_lower * 0.5
+                    or self.value > self.reference_upper * 1.5
+                )
+            )
+        return self
+
+
+
 class MetricRecordResponse(MetricRecordBase):
     id: int
     member_id: int

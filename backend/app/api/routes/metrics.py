@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.models.family import FamilyMember
 from app.models.health import MetricRecord
-from app.schemas.health import MetricRecordCreate, MetricRecordResponse
+from app.schemas.health import MetricRecordCreate, MetricRecordResponse, MetricRecordUpdate
 
 router = APIRouter(prefix="/members", tags=["metrics"])
 
@@ -69,6 +69,63 @@ async def get_metric_history(
         .order_by(MetricRecord.measured_at.desc())
     )
     return list(result.scalars().all())
+
+
+
+@router.put(
+    "/metrics/{metric_id}",
+    response_model=MetricRecordResponse,
+)
+async def update_metric(
+    metric_id: int,
+    payload: MetricRecordUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> MetricRecord:
+    result = await db.execute(
+        select(MetricRecord).where(MetricRecord.id == metric_id)
+    )
+    metric = result.scalars().first()
+    if metric is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MetricRecord {metric_id} not found",
+        )
+    data = payload.model_dump(exclude_unset=True)
+    # Re-compute abnormal/critical if value or references changed
+    new_value = data.get("value", metric.value)
+    new_lower = data.get("reference_lower", metric.reference_lower)
+    new_upper = data.get("reference_upper", metric.reference_upper)
+    if new_lower is not None and new_upper is not None:
+        data["is_abnormal"] = not (new_lower <= new_value <= new_upper)
+        data["is_critical"] = bool(
+            data["is_abnormal"]
+            and (new_value < new_lower * 0.5 or new_value > new_upper * 1.5)
+        )
+    for key, val in data.items():
+        setattr(metric, key, val)
+    await db.flush()
+    await db.refresh(metric)
+    return metric
+
+
+@router.delete(
+    "/metrics/{metric_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_metric(
+    metric_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MetricRecord).where(MetricRecord.id == metric_id)
+    )
+    metric = result.scalars().first()
+    if metric is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MetricRecord {metric_id} not found",
+        )
+    await db.delete(metric)
 
 
 async def _ensure_member(db: AsyncSession, member_id: int) -> None:
