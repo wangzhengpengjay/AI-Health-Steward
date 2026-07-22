@@ -52,6 +52,31 @@ export default function Chat() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) return
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp']
+        if (!validTypes.includes(file.type)) {
+          setError('粘贴的图片格式不支持，仅支持 JPG/PNG/WebP')
+          return
+        }
+        if (file.size > 20 * 1024 * 1024) {
+          setError('粘贴的图片超过 20MB 限制')
+          return
+        }
+        setAttachedFile(file)
+        setError(null)
+        setPreviewUrl(URL.createObjectURL(file))
+        break
+      }
+    }
+  }
+
   const handleSend = async () => {
     if ((!input.trim() && !attachedFile) || isStreaming) return
     if (!currentMemberId) {
@@ -222,7 +247,8 @@ export default function Chat() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={attachedFile ? "描述你的问题，或直接发送让 AI 解读..." : "输入您的健康问题... (Enter 发送, Shift+Enter 换行)"}
+            onPaste={handlePaste}
+            placeholder={attachedFile ? "描述你的问题，或直接发送让 AI 解读..." : "输入健康问题，也可粘贴图片... (Enter 发送)"}
             rows={1}
             disabled={isStreaming}
             className="flex-1 resize-none rounded-field border border-slate-200 px-4 py-2.5 text-sm focus:border-primary focus:outline-none disabled:bg-slate-50"
