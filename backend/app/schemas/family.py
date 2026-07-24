@@ -17,6 +17,8 @@ class FamilyMemberBase(BaseModel):
     weight: Optional[float] = Field(None, gt=0, le=500)  # kg
     blood_type: Optional[str] = Field(None, max_length=8)
     relationship: Optional[str] = Field(None, max_length=32)
+    region: Optional[str] = Field(None, max_length=64)
+    occupation: Optional[str] = Field(None, max_length=64)
 
 
 class FamilyMemberCreate(FamilyMemberBase):
@@ -43,11 +45,37 @@ class FamilyMemberUpdate(BaseModel):
     blood_type: Optional[str] = Field(None, max_length=8)
     relationship: Optional[str] = Field(None, max_length=32)
     bmi: Optional[float] = None
+    region: Optional[str] = Field(None, max_length=64)
+    occupation: Optional[str] = Field(None, max_length=64)
+    is_pregnant: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    is_preparing_pregnancy: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    has_sexual_history: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    contrast_allergy: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    has_pacemaker: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    has_metal_implant: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    on_anticoagulant: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    claustrophobia: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    is_breastfeeding: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    has_coagulopathy: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+    has_heart_failure: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
 
 
 class FamilyMemberResponse(FamilyMemberBase):
     id: int
     bmi: Optional[float] = None
+    region: Optional[str] = None
+    occupation: Optional[str] = None
+    is_pregnant: str = "unknown"
+    is_preparing_pregnancy: str = "unknown"
+    has_sexual_history: str = "unknown"
+    contrast_allergy: str = "unknown"
+    has_pacemaker: str = "unknown"
+    has_metal_implant: str = "unknown"
+    on_anticoagulant: str = "unknown"
+    claustrophobia: str = "unknown"
+    is_breastfeeding: str = "unknown"
+    has_coagulopathy: str = "unknown"
+    has_heart_failure: str = "unknown"
     created_at: datetime
     updated_at: datetime
 
@@ -55,10 +83,30 @@ class FamilyMemberResponse(FamilyMemberBase):
 
     @classmethod
     def from_orm(cls, obj):
-        # Map member_relation attribute to relationship field
-        data = {"id": obj.id, "name": obj.name, "gender": obj.gender,
-                "birth_date": obj.birth_date, "height": obj.height,
-                "weight": obj.weight, "bmi": obj.bmi, "blood_type": obj.blood_type,
-                "relationship": obj.member_relation,
-                "created_at": obj.created_at, "updated_at": obj.updated_at}
+        data = {
+            "id": obj.id,
+            "name": obj.name,
+            "gender": obj.gender,
+            "birth_date": obj.birth_date,
+            "height": obj.height,
+            "weight": obj.weight,
+            "bmi": obj.bmi,
+            "blood_type": obj.blood_type,
+            "relationship": obj.member_relation,
+            "region": obj.region,
+            "occupation": obj.occupation,
+            "is_pregnant": obj.is_pregnant,
+            "is_preparing_pregnancy": obj.is_preparing_pregnancy,
+            "has_sexual_history": obj.has_sexual_history,
+            "contrast_allergy": obj.contrast_allergy,
+            "has_pacemaker": obj.has_pacemaker,
+            "has_metal_implant": obj.has_metal_implant,
+            "on_anticoagulant": obj.on_anticoagulant,
+            "claustrophobia": obj.claustrophobia,
+            "is_breastfeeding": obj.is_breastfeeding,
+            "has_coagulopathy": obj.has_coagulopathy,
+            "has_heart_failure": obj.has_heart_failure,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+        }
         return cls(**data)

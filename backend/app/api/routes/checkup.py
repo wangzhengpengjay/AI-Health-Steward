@@ -1,0 +1,109 @@
+"""Checkup recommendation endpoints."""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.models.family import FamilyMember
+from app.services.checkup_recommend import (
+    build_health_profile,
+    compute_completeness,
+    generate_recommendation,
+)
+
+router = APIRouter(prefix="/members", tags=["checkup"])
+
+
+# ---- Schemas ----
+
+class CompletenessOut(BaseModel):
+    score: int
+    level: str
+    missing_fields: list[str]
+
+
+class ProfileCheckResponse(BaseModel):
+    completeness: CompletenessOut
+
+
+class SupplementRequest(BaseModel):
+    region: Optional[str] = None
+    occupation: Optional[str] = None
+    is_pregnant: Optional[str] = None
+    is_preparing_pregnancy: Optional[str] = None
+    has_sexual_history: Optional[str] = None
+    contrast_allergy: Optional[str] = None
+    has_pacemaker: Optional[str] = None
+    has_metal_implant: Optional[str] = None
+    on_anticoagulant: Optional[str] = None
+    claustrophobia: Optional[str] = None
+    is_breastfeeding: Optional[str] = None
+    has_coagulopathy: Optional[str] = None
+    has_heart_failure: Optional[str] = None
+
+
+class SupplementResponse(BaseModel):
+    updated: bool
+    completeness: CompletenessOut
+
+
+class RecommendRequest(BaseModel):
+    budget_tier: str = "core"  # basic / core / premium
+
+
+class RecommendResponse(BaseModel):
+    content: str
+    completeness: CompletenessOut
+
+
+# ---- Endpoints ----
+
+@router.get("/{member_id}/checkup-profile-check", response_model=ProfileCheckResponse)
+async def profile_check(member_id: int, db: AsyncSession = Depends(get_db)) -> ProfileCheckResponse:
+    member = await db.get(FamilyMember, member_id)
+    if not member or member.is_deleted:
+        raise HTTPException(status_code=404, detail=f"FamilyMember {member_id} not found")
+    profile = await build_health_profile(db, member_id)
+    completeness = compute_completeness(profile)
+    return ProfileCheckResponse(completeness=CompletenessOut(**completeness))
+
+
+@router.patch("/{member_id}/checkup-supplement", response_model=SupplementResponse)
+async def supplement(
+    member_id: int, payload: SupplementRequest, db: AsyncSession = Depends(get_db)
+) -> SupplementResponse:
+    member = await db.get(FamilyMember, member_id)
+    if not member or member.is_deleted:
+        raise HTTPException(status_code=404, detail=f"FamilyMember {member_id} not found")
+
+    data = payload.model_dump(exclude_none=True)
+    for key, value in data.items():
+        setattr(member, key, value)
+    await db.flush()
+
+    profile = await build_health_profile(db, member_id)
+    completeness = compute_completeness(profile)
+    return SupplementResponse(updated=True, completeness=CompletenessOut(**completeness))
+
+
+@router.post("/{member_id}/checkup-recommend", response_model=RecommendResponse)
+async def recommend(
+    member_id: int, payload: RecommendRequest, db: AsyncSession = Depends(get_db)
+) -> RecommendResponse:
+    member = await db.get(FamilyMember, member_id)
+    if not member or member.is_deleted:
+        raise HTTPException(status_code=404, detail=f"FamilyMember {member_id} not found")
+
+    valid_tiers = {"basic", "core", "premium"}
+    if payload.budget_tier not in valid_tiers:
+        raise HTTPException(status_code=400, detail=f"budget_tier must be one of {valid_tiers}")
+
+    result = await generate_recommendation(db, member_id, payload.budget_tier)
+    return RecommendResponse(
+        content=result["content"],
+        completeness=CompletenessOut(**result["completeness"]),
+    )

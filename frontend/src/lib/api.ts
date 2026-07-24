@@ -293,3 +293,58 @@ export const reportsApi = {
       { method: 'POST', body: JSON.stringify(data) },
     ),
 }
+
+// ---- Checkup Recommendation ----
+
+export interface Completeness {
+  score: number
+  level: string
+  missing_fields: string[]
+}
+
+export interface ProfileCheckResponse {
+  completeness: Completeness
+}
+
+export interface SupplementResponse {
+  updated: boolean
+  completeness: Completeness
+}
+
+export interface RecommendResponse {
+  content: string
+  completeness: Completeness
+}
+
+export interface SupplementPayload {
+  region?: string
+  occupation?: string
+  is_pregnant?: string
+  is_preparing_pregnancy?: string
+  has_sexual_history?: string
+  contrast_allergy?: string
+  has_pacemaker?: string
+  has_metal_implant?: string
+  on_anticoagulant?: string
+  claustrophobia?: string
+  is_breastfeeding?: string
+  has_coagulopathy?: string
+  has_heart_failure?: string
+}
+
+export const checkupApi = {
+  profileCheck: (memberId: number) =>
+    request<ProfileCheckResponse>(`/members/${memberId}/checkup-profile-check`),
+
+  supplement: (memberId: number, data: SupplementPayload) =>
+    request<SupplementResponse>(`/members/${memberId}/checkup-supplement`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  recommend: (memberId: number, budgetTier: string) =>
+    request<RecommendResponse>(`/members/${memberId}/checkup-recommend`, {
+      method: 'POST',
+      body: JSON.stringify({ budget_tier: budgetTier }),
+    }),
+}

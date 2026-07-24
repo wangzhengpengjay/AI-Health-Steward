@@ -26,6 +26,19 @@ export interface FamilyMember {
   relationship?: Relationship
   phone?: string
   avatar_url?: string
+  region?: string
+  occupation?: string
+  is_pregnant?: string
+  is_preparing_pregnancy?: string
+  has_sexual_history?: string
+  contrast_allergy?: string
+  has_pacemaker?: string
+  has_metal_implant?: string
+  on_anticoagulant?: string
+  claustrophobia?: string
+  is_breastfeeding?: string
+  has_coagulopathy?: string
+  has_heart_failure?: string
   created_at: string
   updated_at: string
 }

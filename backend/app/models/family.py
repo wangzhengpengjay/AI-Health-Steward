@@ -23,6 +23,24 @@ class FamilyMember(Base):
     blood_type: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # A/B/AB/O[+/-]
     member_relation: Mapped[Optional[str]] = mapped_column("relationship", String(32), nullable=True)
 
+    # Checkup recommendation: region & occupation
+    region: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    occupation: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Checkup safety: contraindication fields (default "unknown")
+    is_pregnant: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    is_preparing_pregnancy: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    has_sexual_history: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    contrast_allergy: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    has_pacemaker: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    has_metal_implant: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    egfr: Mapped[Optional[float]] = mapped_column(nullable=True)
+    on_anticoagulant: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    claustrophobia: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    is_breastfeeding: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    has_coagulopathy: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+    has_heart_failure: Mapped[str] = mapped_column(String(8), default="unknown", nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

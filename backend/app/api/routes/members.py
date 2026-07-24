@@ -125,5 +125,12 @@ def _to_response(m: FamilyMember) -> FamilyMemberResponse:
         birth_date=m.birth_date, height=m.height,
         weight=m.weight, bmi=m.bmi, blood_type=m.blood_type,
         relationship=m.member_relation,
+        region=m.region, occupation=m.occupation,
+        is_pregnant=m.is_pregnant, is_preparing_pregnancy=m.is_preparing_pregnancy,
+        has_sexual_history=m.has_sexual_history, contrast_allergy=m.contrast_allergy,
+        has_pacemaker=m.has_pacemaker, has_metal_implant=m.has_metal_implant,
+        on_anticoagulant=m.on_anticoagulant, claustrophobia=m.claustrophobia,
+        is_breastfeeding=m.is_breastfeeding, has_coagulopathy=m.has_coagulopathy,
+        has_heart_failure=m.has_heart_failure,
         created_at=m.created_at, updated_at=m.updated_at,
     )

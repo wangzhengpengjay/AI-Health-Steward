@@ -11,6 +11,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard', label: '画像看板', icon: 'dashboard' },
   { to: '/chat', label: 'AI 咨询', icon: 'forum' },
   { to: '/reports', label: '报告管理', icon: 'description' },
+  { to: '/checkup', label: '体检推荐', icon: 'monitor_heart' },
   { to: '/members', label: '成员管理', icon: 'group' },
   { to: '/metric-input', label: '健康指标', icon: 'monitoring' },
   { to: '/settings', label: '设置', icon: 'settings' },

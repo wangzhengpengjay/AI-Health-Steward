@@ -13,6 +13,7 @@
 - **Person-Level Health Profile** — A–H field families (basic info / physiological metrics / diagnoses / medications / allergies / lifestyle / family history / data provenance) as a single source of truth
 - **AI Health Consultation** — Intent routing via function calling, answers based on your actual profile data — not a generic chatbot
 - **Metric Trend Visualization** — Blood pressure, blood glucose, heart rate, weight/BMI trend charts with abnormal markers
+- **Personalized Checkup Recommendations** — Generates customized checkup plans based on health profiles using the 1+X+Y framework (core basics / condition-specific / risk screening), with budget tier selection and safety contraindication checks
 - **Lab & Exam Tracking** — Lab results grouped by report name with per-test charts; exam findings (e.g., pulmonary nodules) displayed on a timeline
 - **Multi-Channel** — WebUI as the primary interface; Feishu bot for data collection and lightweight Q&A (V0.4)
 - **Pluggable Models** — Multimodal API (required) / Text API (optional) / Local LLM (optional), configured on demand
@@ -67,6 +68,7 @@ AI-Health-Steward/
 │   │   ├── models/          # SQLAlchemy models
 │   │   ├── schemas/         # Pydantic schemas
 │   │   ├── services/        # Business logic (AI consultation, tools)
+│   │   ├── prompts/         # AI prompt templates
 │   │   └── providers/       # Model provider abstraction
 │   ├── alembic/             # Database migrations
 │   └── tests/               # Tests

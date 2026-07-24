@@ -52,3 +52,4 @@ backend/alembic/versions/*.pyc
 .obsidian/
 openspec/
 OVERVIEW.md
+docs/

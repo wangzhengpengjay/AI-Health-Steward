@@ -6,6 +6,7 @@ import Reports from './pages/Reports'
 import Members from './pages/Members'
 import MetricInput from './pages/MetricInput'
 import Settings from './pages/Settings'
+import CheckupRecommend from './pages/CheckupRecommend'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/members" element={<Members />} />
         <Route path="/metric-input" element={<MetricInput />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/checkup" element={<CheckupRecommend />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
