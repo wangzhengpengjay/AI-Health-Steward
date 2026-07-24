@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 interface Completeness {
   score: number
@@ -6,28 +7,35 @@ interface Completeness {
   missing_fields: string[]
 }
 
-interface CheckupState {
+interface MemberResult {
   loading: boolean
   content: string | null
   error: string | null
   completeness: Completeness | null
-  memberKey: string | null  // `${memberId}` to track which member's result
-  setLoading: (v: boolean) => void
-  setContent: (content: string, completeness: Completeness, memberKey: string) => void
-  setError: (error: string, memberKey: string) => void
-  reset: (memberKey: string) => void
 }
 
-export const useCheckupStore = create<CheckupState>((set) => ({
-  loading: false,
-  content: null,
-  error: null,
-  completeness: null,
-  memberKey: null,
-  setLoading: (v) => set({ loading: v }),
-  setContent: (content, completeness, memberKey) =>
-    set({ content, completeness, memberKey, loading: false, error: null }),
-  setError: (error, memberKey) =>
-    set({ error, memberKey, loading: false }),
-  reset: (memberKey) => set({ loading: false, content: null, error: null, completeness: null, memberKey }),
-}))
+interface CheckupState {
+  results: Record<number, MemberResult>
+  setLoading: (memberId: number, v: boolean) => void
+  setContent: (memberId: number, content: string, completeness: Completeness) => void
+  setError: (memberId: number, error: string) => void
+  getResult: (memberId: number) => MemberResult
+}
+
+const EMPTY: MemberResult = { loading: false, content: null, error: null, completeness: null }
+
+export const useCheckupStore = create<CheckupState>()(
+  persist(
+    (set, get) => ({
+      results: {},
+      setLoading: (memberId, v) =>
+        set((s) => ({ results: { ...s.results, [memberId]: { ...get().getResult(memberId), loading: v } } })),
+      setContent: (memberId, content, completeness) =>
+        set((s) => ({ results: { ...s.results, [memberId]: { content, completeness, loading: false, error: null } } })),
+      setError: (memberId, error) =>
+        set((s) => ({ results: { ...s.results, [memberId]: { ...get().getResult(memberId), error, loading: false } } })),
+      getResult: (memberId) => get().results[memberId] ?? EMPTY,
+    }),
+    { name: 'checkup-store' }
+  )
+)

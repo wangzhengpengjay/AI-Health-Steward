@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { checkupApi, type SupplementPayload } from '@/lib/api'
+import { checkupApi, membersApi, type SupplementPayload } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 
 const BUDGET_OPTIONS = [
@@ -30,7 +30,7 @@ interface Props {
 }
 
 export default function CheckupSupplementModal({ onSubmit, onClose }: Props) {
-  const { currentMemberId, members } = useMemberStore()
+  const { currentMemberId, members, upsertMember } = useMemberStore()
   const member = members.find((m) => m.id === currentMemberId)
   const isFemale = member?.gender === 'female'
 
@@ -68,6 +68,9 @@ export default function CheckupSupplementModal({ onSubmit, onClose }: Props) {
         }
       }
       await checkupApi.supplement(currentMemberId, payload)
+      // Refresh member data so next open has updated values
+      const updated = await membersApi.get(currentMemberId)
+      upsertMember(updated)
       onSubmit(budgetTier)
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败，请重试')
