@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { settingsApi, type ProviderConfig, type ProviderUpdatePayload } from '@/lib/api'
+import { settingsApi, feishuApi, membersApi, type ProviderConfig, type ProviderUpdatePayload, type FeishuChannel } from '@/lib/api'
 
 interface EditState {
   multimodal_api_base: string
@@ -25,6 +25,37 @@ export default function Settings() {
   const { data: providers, isLoading } = useQuery({
     queryKey: ['settings-providers'],
     queryFn: settingsApi.getProviders,
+  })
+
+  const { data: feishuChannels, refetch: refetchFeishu } = useQuery({
+    queryKey: ['feishu-channels'],
+    queryFn: feishuApi.listChannels,
+  })
+
+  const { data: members } = useQuery({
+    queryKey: ['members'],
+    queryFn: membersApi.list,
+  })
+
+  const [showChannelModal, setShowChannelModal] = useState(false)
+  const [editingChannel, setEditingChannel] = useState<FeishuChannel | null>(null)
+
+  const channelSaveMutation = useMutation({
+    mutationFn: (data: { id?: number; name: string; app_id: string; app_secret: string; member_id: number | null; is_active: boolean }) => {
+      const { id, ...payload } = data
+      if (id) return feishuApi.updateChannel(id, payload)
+      return feishuApi.createChannel(payload)
+    },
+    onSuccess: () => {
+      setShowChannelModal(false)
+      setEditingChannel(null)
+      refetchFeishu()
+    },
+  })
+
+  const channelDeleteMutation = useMutation({
+    mutationFn: (id: number) => feishuApi.deleteChannel(id),
+    onSuccess: () => refetchFeishu(),
   })
 
   const healthMutation = useMutation({
@@ -293,7 +324,76 @@ export default function Settings() {
         )}
       </section>
 
-      {/* Data Management */}
+      {/* Feishu Bot */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-medium text-slate-500">飞书机器人</h2>
+          <button
+            onClick={() => { setEditingChannel(null); setShowChannelModal(true) }}
+            className="flex items-center gap-1.5 rounded-lg border border-primary px-3 py-1.5 text-sm text-primary transition hover:bg-primary/5"
+          >
+            <span className="material-symbols-rounded text-base">add</span>
+            添加渠道
+          </button>
+        </div>
+
+        {!feishuChannels || feishuChannels.length === 0 ? (
+          <div className="rounded-card border border-dashed border-slate-300 bg-bg-primary p-8 text-center">
+            <span className="material-symbols-rounded text-3xl text-slate-300">chat</span>
+            <p className="mt-2 text-sm text-slate-400">
+              暂无飞书渠道。添加渠道后，可通过飞书 Bot 接收报告和轻问答。
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {feishuChannels.map((ch) => (
+              <div key={ch.id} className="rounded-card border border-slate-200 bg-bg-primary p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${ch.connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                    <span className="font-medium text-slate-800">{ch.name}</span>
+                    {!ch.is_active && (
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-400">已停用</span>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => { setEditingChannel(ch); setShowChannelModal(true) }}
+                      className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    >
+                      <span className="material-symbols-rounded text-base">edit</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`删除渠道"${ch.name}"？`)) channelDeleteMutation.mutate(ch.id)
+                      }}
+                      className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                    >
+                      <span className="material-symbols-rounded text-base">delete</span>
+                    </button>
+                  </div>
+                </div>
+                <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <div><dt className="text-slate-400">App ID</dt><dd className="text-slate-700">{ch.app_id || '-'}</dd></div>
+                  <div><dt className="text-slate-400">绑定成员</dt><dd className="text-slate-700">{ch.member_name || '默认本人'}</dd></div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {showChannelModal && (
+          <ChannelModal
+            channel={editingChannel}
+            members={members}
+            onSave={(data) => channelSaveMutation.mutate(data)}
+            onClose={() => { setShowChannelModal(false); setEditingChannel(null) }}
+            saving={channelSaveMutation.isPending}
+          />
+        )}
+      </section>
+
+      {/* Data Management */}      {/* Data Management */}
       <section>
         <h2 className="mb-3 text-sm font-medium text-slate-500">数据管理</h2>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -430,6 +530,106 @@ function ProviderCard({ title, icon, cfg, health, checking, required }: Provider
         </div>
       </dl>
       {health?.error && <p className="mt-2 text-xs text-red-500">{health.error}</p>}
+    </div>
+  )
+}
+
+
+interface ChannelModalProps {
+  channel: FeishuChannel | null
+  members: unknown
+  onSave: (data: { id?: number; name: string; app_id: string; app_secret: string; member_id: number | null; is_active: boolean }) => void
+  onClose: () => void
+  saving: boolean
+}
+
+function ChannelModal({ channel, members, onSave, onClose, saving }: ChannelModalProps) {
+  const [name, setName] = useState(channel?.name || '')
+  const [appId, setAppId] = useState('')
+  const [appSecret, setAppSecret] = useState('')
+  const [memberId, setMemberId] = useState<number | null>(channel?.member_id || null)
+  const [isActive, setIsActive] = useState(channel?.is_active ?? true)
+
+  const memberList = (Array.isArray(members) ? members : []) as { id: number; name: string }[]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="mb-4 text-lg font-medium text-slate-800">
+          {channel ? '编辑飞书渠道' : '添加飞书渠道'}
+        </h3>
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm text-slate-500">渠道名称</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="如：爸爸的飞书"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-500">App ID</label>
+            <input
+              value={appId}
+              onChange={e => setAppId(e.target.value)}
+              placeholder={channel ? "留空不修改" : "cli_xxxxxxxx"}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-500">
+              App Secret {channel && <span className="text-xs text-slate-400">（留空不修改）</span>}
+            </label>
+            <input
+              type="password"
+              value={appSecret}
+              onChange={e => setAppSecret(e.target.value)}
+              placeholder={channel ? '留空不修改' : '输入 App Secret'}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-500">绑定成员</label>
+            <select
+              value={memberId ?? 0}
+              onChange={e => setMemberId(e.target.value ? Number(e.target.value) : null)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            >
+              <option value={0}>默认本人（第一个成员）</option>
+              {memberList.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />
+            启用此渠道
+          </label>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-50"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onSave({
+              id: channel?.id,
+              name,
+              app_id: appId || (channel ? '__unchanged__' : ''),
+              app_secret: appSecret || (channel ? '__unchanged__' : ''),
+              member_id: memberId,
+              is_active: isActive,
+            })}
+            disabled={saving || !name}
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-white transition hover:bg-primary/90 disabled:opacity-50"
+          >
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

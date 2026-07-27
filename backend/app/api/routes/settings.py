@@ -216,7 +216,7 @@ async def export_all_data(db: AsyncSession = Depends(get_db)) -> StreamingRespon
     for name, model in _EXPORT_MODELS.items():
         rows = (await db.execute(select(model))).scalars().all()
         payload[name] = [
-            {c.name: getattr(r, c.name) for c in r.__table__.columns}
+            {c.name: getattr(r, c.name, None) for c in r.__table__.columns}
             for r in rows
         ]
 

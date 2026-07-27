@@ -264,6 +264,13 @@ class ConsultationService:
         self.db.add(record)
         await self.db.flush()
 
+        # Save file to disk for thumbnail/preview
+        from pathlib import Path
+        import os
+        upload_dir = Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        (upload_dir / f"{record.id}{ext}").write_bytes(file_content)
+
         # Fetch family members for prompt context
         members_result = await self.db.execute(
             select(FamilyMember).where(FamilyMember.is_deleted.is_(False))

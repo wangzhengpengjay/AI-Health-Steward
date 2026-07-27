@@ -479,3 +479,41 @@ export interface ProviderUpdatePayload {
   local_llm_model?: string
   text_provider_priority?: string
 }
+
+export interface FeishuChannel {
+  id: number
+  name: string
+  app_id: string
+  app_secret_masked: string
+  member_id: number | null
+  member_name: string | null
+  is_active: boolean
+  connected: boolean
+}
+
+export interface FeishuChannelCreate {
+  name: string
+  app_id: string
+  app_secret: string
+  member_id?: number | null
+  is_active?: boolean
+}
+
+export interface FeishuChannelUpdate {
+  name?: string
+  app_id?: string
+  app_secret?: string
+  member_id?: number | null
+  is_active?: boolean
+}
+
+export const feishuApi = {
+  listChannels: () => request<FeishuChannel[]>('/feishu/channels'),
+  createChannel: (data: FeishuChannelCreate) =>
+    request<FeishuChannel>('/feishu/channels', { method: 'POST', body: JSON.stringify(data) }),
+  updateChannel: (id: number, data: FeishuChannelUpdate) =>
+    request<FeishuChannel>(`/feishu/channels/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteChannel: (id: number) =>
+    request<{ deleted: boolean; id: number }>(`/feishu/channels/${id}`, { method: 'DELETE' }),
+  reload: () => request<{ ok: boolean; connections: any[] }>('/feishu/reload', { method: 'POST' }),
+}

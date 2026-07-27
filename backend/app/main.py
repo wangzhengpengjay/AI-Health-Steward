@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,12 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.services.feishu import feishu_bot
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup / shutdown hooks go here (e.g. engine warm-up)
+    # Start Feishu channels if any are configured
+    asyncio.ensure_future(feishu_bot.start_all())
     yield
+    await feishu_bot.stop_all()
 
 
 app = FastAPI(

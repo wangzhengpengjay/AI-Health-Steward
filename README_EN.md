@@ -15,7 +15,7 @@
 - **Metric Trend Visualization** — Blood pressure, blood glucose, heart rate, weight/BMI trend charts with abnormal markers
 - **Personalized Checkup Recommendations** — Generates customized checkup plans based on health profiles using the 1+X+Y framework (core basics / condition-specific / risk screening), with budget tier selection and safety contraindication checks
 - **Lab & Exam Tracking** — Lab results grouped by report name with per-test charts; exam findings (e.g., pulmonary nodules) displayed on a timeline
-- **Multi-Channel** — WebUI as the primary interface; Feishu bot for data collection and lightweight Q&A (V0.4)
+- **Feishu Integration** — Configure multiple Feishu bots, each bound to a family member; WebSocket long-connection for message reception, supporting text Q&A and image report extraction
 - **Pluggable Models** — Multimodal API (required) / Text API (optional) / Local LLM (optional), configured on demand
 - **Family Multi-Member** — Single instance serves one family with isolated member data
 - **Report Management** — Full report lifecycle (upload → AI extraction → confirm → archive), with three upload entry points: report page, metric page, and AI chat
@@ -70,7 +70,7 @@ AI-Health-Steward/
 │   │   ├── core/            # Config, database
 │   │   ├── models/          # SQLAlchemy models
 │   │   ├── schemas/         # Pydantic schemas
-│   │   ├── services/        # Business logic (AI consultation, tools)
+│   │   ├── services/        # Business logic (AI consultation, Feishu channel)
 │   │   ├── prompts/         # AI prompt templates
 │   │   └── providers/       # Model provider abstraction
 │   ├── alembic/             # Database migrations
@@ -93,9 +93,8 @@ AI-Health-Steward/
 |---------|------|--------|
 | V0.1 | Project scaffold & data foundation | ✅ Done |
 | V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
-| V0.3 | Report import & visualization — multimodal extraction, trends, dashboard | 🔧 In Progress |
 | V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations | 🔧 In Progress |
-| V0.4 | Feishu channel — data collection, lightweight Q&A | Planned |
+| V0.4 | Feishu channel — multi-channel management, data collection, lightweight Q&A | ✅ Done |
 | V1.0 | Open-source release — docs, one-click deploy | Planned |
 
 ## Screenshots
