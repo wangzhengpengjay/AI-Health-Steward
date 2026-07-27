@@ -1,21 +1,28 @@
 """AI consultation service — orchestrates model provider + tool calling.
 
 When an image/PDF is attached:
-1. Extract structured data via multimodal model
-2. Inject extracted data into system prompt
-3. Chat with text model (supports tool calling)
+1. Create a ReportRecord (status=extracting)
+2. Extract structured data via multimodal model (single call, reused for both chat context and report archive)
+3. Inject extracted data into system prompt
+4. Chat with text model (supports tool calling)
+5. Report record is saved to DB for user confirmation (no second extraction needed)
 
-This avoids vision + tool_calling compatibility issues and gives the text
-model structured context for more accurate answers.
+This eliminates the previous double-extraction redundancy (chat stream + separate
+reports/upload both calling multimodal model for the same image).
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.family import FamilyMember
+from app.models.health import ReportRecord
 from app.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from app.providers.router import ModelRouter
 from app.services.tools.registry import ToolRegistry
@@ -100,7 +107,7 @@ EXTRACT_PROMPT = """\
     {
       "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等",
       "finding_desc": "具体诊断描述，如 右肺水平裂旁微小磨玻璃结节",
-      "value_num": 可量化的数值或null",
+      "value_num": "可量化的数值或null",
       "unit": "数值的单位或null",
       "conclusion": "检查结论或建议"
     }
@@ -116,12 +123,7 @@ _A_LEVEL_KEYWORDS = ["用药", "药物", "相互作用", "副作用", "胸痛", 
 class ConsultationService:
     """Orchestrates the model provider and health tools for a consultation."""
 
-    def __init__(
-        self,
-        router: ModelRouter,
-        tool_registry: ToolRegistry,
-        db: AsyncSession,
-    ) -> None:
+    def __init__(self, router: ModelRouter, tool_registry: ToolRegistry, db: AsyncSession) -> None:
         self.router = router
         self.tools = tool_registry
         self.db = db
@@ -137,8 +139,8 @@ class ConsultationService:
         system_prompt = SYSTEM_PROMPT
 
         if has_vision:
-            # Step 1: extract structured data from image via multimodal
-            extracted_text = await self._extract_from_image(image_data_url)
+            report_data = await self._create_report_record(member_id, image_data_url)
+            extracted_text = report_data.get("extraction_json", "")
             system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
             provider = self.router.get_text_provider()
         else:
@@ -182,12 +184,18 @@ class ConsultationService:
         user_message: str,
         conversation_history: list[Message] | None = None,
         image_data_url: str | None = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[tuple[str, str | None]]:
+        """Yield (event_type, data) tuples.
+
+        event_type: "delta" (text chunk) or "report" (report record JSON).
+        """
         has_vision = image_data_url is not None
         system_prompt = SYSTEM_PROMPT
 
+        report_data: dict | None = None
         if has_vision:
-            extracted_text = await self._extract_from_image(image_data_url)
+            report_data = await self._create_report_record(member_id, image_data_url)
+            extracted_text = report_data.get("extraction_json", "")
             logger.info("Image extraction done, length=%d, starting text chat stream", len(extracted_text))
             system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
             provider = self.router.get_text_provider()
@@ -196,7 +204,10 @@ class ConsultationService:
 
         tool_defs = self.tools.get_all_tool_definitions()
         messages = self._build_messages(user_message, system_prompt, conversation_history)
-        logger.info("chat_stream: has_vision=%s, tool_defs=%d, messages=%d", has_vision, len(tool_defs or []), len(messages))
+
+        # Emit report record first so frontend can show extraction card immediately
+        if report_data:
+            yield ("report", json.dumps(report_data, ensure_ascii=False, default=str))
 
         max_rounds = 5
 
@@ -204,13 +215,10 @@ class ConsultationService:
             response: ModelResponse = await provider.chat(
                 messages, tools=tool_defs if tool_defs else None
             )
-            logger.info("chat_stream: response tool_calls=%s, content_len=%d", bool(response.tool_calls), len(response.content or ""))
 
             if not response.tool_calls:
-                logger.info("chat_stream: starting stream output")
                 async for delta in await provider.chat(messages, tools=None, stream=True):
-                    yield delta
-                logger.info("chat_stream: stream output done")
+                    yield ("delta", delta)
                 return
 
             tool_calls_oi = [
@@ -224,24 +232,58 @@ class ConsultationService:
                 messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
 
         async for delta in await provider.chat(messages, tools=None, stream=True):
-            yield delta
+            yield ("delta", delta)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _extract_from_image(self, image_data_url: str) -> str:
-        """Use multimodal model to extract structured data from report image."""
+    async def _create_report_record(self, member_id: int, image_data_url: str) -> dict:
+        """Create a ReportRecord, run single multimodal extraction, persist, and return dict.
+
+        One multimodal call serves both: chat context AND report archive.
+        """
+        # Parse data URL: data:{mime};base64,{data}
+        header, b64_data = image_data_url.split(",", 1)
+        mime = header.split(":")[1].split(";")[0]
+        file_content = base64.b64decode(b64_data)
+        file_size = len(file_content)
+
+        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+        ext = ext_map.get(mime, ".bin")
+        file_name = f"chat_upload_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}{ext}"
+
+        record = ReportRecord(
+            member_id=member_id,
+            file_name=file_name,
+            file_type=mime,
+            file_size=file_size,
+            source="chat",
+            status="extracting",
+        )
+        self.db.add(record)
+        await self.db.flush()
+
+        # Fetch family members for prompt context
+        members_result = await self.db.execute(
+            select(FamilyMember).where(FamilyMember.is_deleted.is_(False))
+        )
+        members = members_result.scalars().all()
+        member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
+        prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}"
+
         multimodal = self.router.get_multimodal_provider()
         messages = [
-            Message(role="system", content=EXTRACT_PROMPT),
+            Message(role="system", content=prompt),
             Message(role="user", content=[
                 {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
                 {"type": "image_url", "image_url": {"url": image_data_url}},
             ]),
         ]
+
         import asyncio
         last_err = None
+        data = None
         for attempt in range(3):
             try:
                 response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
@@ -251,14 +293,59 @@ class ConsultationService:
                     lines = [l for l in lines if not l.strip().startswith("```")]
                     raw = "\n".join(lines)
                 data = json.loads(raw)
-                return json.dumps(data, ensure_ascii=False, indent=2)
+                break
             except Exception as e:
                 last_err = e
                 logger.warning("Image extraction attempt %d failed: %s", attempt + 1, e)
                 if attempt < 2:
                     await asyncio.sleep(2)
-        logger.error("Image extraction failed after 3 attempts")
-        return f"[报告解析失败: {last_err}] 请用户描述报告内容。"
+
+        if data is None:
+            logger.error("Image extraction failed after 3 attempts for report %s", record.id)
+            record.status = "rejected"
+            await self.db.flush()
+            await self.db.commit()
+            return {
+                "id": record.id,
+                "status": "rejected",
+                "error": str(last_err),
+                "extraction_json": f"[报告解析失败: {last_err}] 请用户描述报告内容。",
+            }
+
+        # Success — persist extraction
+        record.extraction = json.dumps(data, ensure_ascii=False)
+        record.report_type = data.get("report_type")
+        report_date_str = data.get("report_date")
+        record.report_date = datetime.fromisoformat(report_date_str) if report_date_str else None
+        record.summary = data.get("summary")
+        record.patient_name = data.get("patient_name")
+        record.status = "pending"
+        await self.db.flush()
+        await self.db.commit()
+        await self.db.refresh(record)
+
+        return {
+            "id": record.id,
+            "member_id": record.member_id,
+            "file_name": record.file_name,
+            "file_type": record.file_type,
+            "file_size": record.file_size,
+            "source": record.source,
+            "status": record.status,
+            "extraction": data,
+            "report_type": record.report_type,
+            "report_date": record.report_date.isoformat() if record.report_date else None,
+            "summary": record.summary,
+            "patient_name": record.patient_name,
+            "saved_metrics": record.saved_metrics,
+            "saved_diagnoses": record.saved_diagnoses,
+            "saved_medications": record.saved_medications,
+            "saved_lab_tests": record.saved_lab_tests,
+            "saved_exam_findings": record.saved_exam_findings,
+            "created_at": record.created_at.isoformat() if record.created_at else "",
+            "updated_at": record.updated_at.isoformat() if record.updated_at else "",
+            "extraction_json": json.dumps(data, ensure_ascii=False, indent=2),
+        }
 
     def _build_messages(
         self,

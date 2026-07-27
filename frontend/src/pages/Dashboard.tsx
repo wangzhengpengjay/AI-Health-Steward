@@ -25,7 +25,7 @@ export default function Dashboard() {
   const { currentMemberId, members } = useMemberStore()
   const queryClient = useQueryClient()
   const member = members.find((m) => m.id === currentMemberId)
-  const [addModal, setAddModal] = useState<null | 'diagnosis' | 'medication' | 'allergy'>(null)
+  const [addModal, setAddModal] = useState<null | 'diagnosis' | 'medication' | 'allergy' | 'lifestyle' | 'surgery' | 'vaccination'>(null)
   const [reportDetail, setReportDetail] = useState<{ name: string; type: 'lab' | 'exam'; records: Record<string, MetricRecord[]> } | null>(null)
 
   const { data: allMetrics = [] } = useQuery({
@@ -89,9 +89,12 @@ export default function Dashboard() {
     ? Math.floor((Date.now() - new Date(member.birth_date).getTime()) / 365.25 / 86400000)
     : null
 
-  const diagnoses = profile?.diagnoses ?? []
-  const medications = profile?.medications ?? []
-  const allergies = profile?.allergies ?? []
+ const diagnoses = profile?.diagnoses ?? []
+ const medications = profile?.medications ?? []
+ const allergies = profile?.allergies ?? []
+  const lifestyles = profile?.lifestyles ?? []
+  const surgeries = profile?.surgeries ?? []
+  const vaccinations = profile?.vaccinations ?? []
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-bg-secondary">
@@ -244,6 +247,54 @@ export default function Dashboard() {
               ]}
               onDelete={() => deleteMutation.mutate({ type: 'allergies', id: a.id })}
             />
+         ))}
+       </SectionCard>
+
+        {/* Lifestyle (smoking/drinking) */}
+        <SectionCard
+          icon="smoke_free"
+          title="个人史"
+          onAdd={() => setAddModal('lifestyle')}
+        >
+          {lifestyles.length === 0 ? <Empty text="暂无个人史记录" /> : lifestyles.map((l) => (
+            <RecordRow
+              key={l.id}
+              title={l.category === 'smoking' ? '吸烟' : l.category === 'drinking' ? '饮酒' : l.category === 'exercise' ? '运动' : l.category === 'sleep' ? '睡眠' : '饮食'}
+              badges={[l.status, l.frequency ?? null, l.recorded_at ?? null]}
+              onDelete={() => deleteMutation.mutate({ type: 'lifestyles', id: l.id })}
+            />
+          ))}
+        </SectionCard>
+
+        {/* Surgical history */}
+        <SectionCard
+          icon="healing"
+          title="手术史"
+          onAdd={() => setAddModal('surgery')}
+        >
+          {surgeries.length === 0 ? <Empty text="暂无手术记录" /> : surgeries.map((s) => (
+            <RecordRow
+              key={s.id}
+              title={s.surgery_name}
+              badges={[s.surgery_date ?? null, s.hospital ?? null]}
+              onDelete={() => deleteMutation.mutate({ type: 'surgeries', id: s.id })}
+            />
+          ))}
+        </SectionCard>
+
+        {/* Vaccination history */}
+        <SectionCard
+          icon="vaccines"
+          title="疫苗接种史"
+          onAdd={() => setAddModal('vaccination')}
+        >
+          {vaccinations.length === 0 ? <Empty text="暂无疫苗接种记录" /> : vaccinations.map((v) => (
+            <RecordRow
+              key={v.id}
+              title={v.vaccine_name}
+              badges={[v.dose_no ?? null, v.vaccinated_date ?? null, v.facility ?? null]}
+              onDelete={() => deleteMutation.mutate({ type: 'vaccinations', id: v.id })}
+            />
           ))}
         </SectionCard>
 
@@ -356,7 +407,7 @@ function SummaryCard({ label, value, abnormal }: { label: string; value: number;
 
 // ---- Add modal ----
 function AddProfileModal({ type, memberId, onClose, onSuccess }: {
-  type: 'diagnosis' | 'medication' | 'allergy'
+  type: 'diagnosis' | 'medication' | 'allergy' | 'lifestyle' | 'surgery' | 'vaccination'
   memberId: number
   onClose: () => void
   onSuccess: () => void
@@ -366,7 +417,10 @@ function AddProfileModal({ type, memberId, onClose, onSuccess }: {
     mutationFn: async (data: Record<string, unknown>) => {
       if (type === 'diagnosis') return profileApi.addDiagnosis(memberId, data as never)
       if (type === 'medication') return profileApi.addMedication(memberId, data as never)
-      return profileApi.addAllergy(memberId, data as never)
+      if (type === 'allergy') return profileApi.addAllergy(memberId, data as never)
+      if (type === 'lifestyle') return profileApi.addLifestyle(memberId, data as never)
+      if (type === 'surgery') return profileApi.addSurgery(memberId, data as never)
+      return profileApi.addVaccination(memberId, data as never)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile', memberId] })
@@ -374,7 +428,8 @@ function AddProfileModal({ type, memberId, onClose, onSuccess }: {
     },
   })
 
-  const title = type === 'diagnosis' ? '诊断' : type === 'medication' ? '用药' : '过敏'
+  const TITLE_MAP: Record<string, string> = { diagnosis: '诊断', medication: '用药', allergy: '过敏', lifestyle: '个人史', surgery: '手术', vaccination: '疫苗接种' }
+  const title = TITLE_MAP[type] ?? type
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
@@ -417,14 +472,33 @@ function AddProfileModal({ type, memberId, onClose, onSuccess }: {
               <DateField label="开始日期" name="start_date" />
             </>
           )}
-          {type === 'allergy' && (
+         {type === 'allergy' && (
+           <>
+             <SelectField label="类型" name="type" options={[['drug', '药物'], ['food', '食物'], ['other', '其他']]} />
+             <Field label="过敏原" name="name" required />
+             <SelectField label="严重程度" name="severity" options={[['mild', '轻度'], ['moderate', '中度'], ['severe', '重度']]} />
+           </>
+         )}
+         {type === 'lifestyle' && (
+            <LifestyleForm />
+         )}
+         {type === 'surgery' && (
             <>
-              <SelectField label="类型" name="type" options={[['drug', '药物'], ['food', '食物'], ['other', '其他']]} />
-              <Field label="过敏原" name="name" required />
-              <SelectField label="严重程度" name="severity" options={[['mild', '轻度'], ['moderate', '中度'], ['severe', '重度']]} />
+              <Field label="手术名称" name="surgery_name" required />
+              <DateField label="手术日期" name="surgery_date" />
+              <Field label="医院" name="hospital" />
+              <Field label="备注" name="notes" />
             </>
           )}
-          {mutation.error && <p className="text-sm text-red-500">保存失败</p>}
+          {type === 'vaccination' && (
+            <>
+              <Field label="疫苗名称" name="vaccine_name" required placeholder="如 乙肝疫苗" />
+              <Field label="剂次" name="dose_no" placeholder="如 第1剂、加强针" />
+              <DateField label="接种日期" name="vaccinated_date" />
+              <Field label="接种机构" name="facility" />
+            </>
+          )}
+         {mutation.error && <p className="text-sm text-red-500">保存失败</p>}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 rounded-field border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50">取消</button>
             <button type="submit" disabled={mutation.isPending} className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50">
@@ -463,5 +537,35 @@ function DateField({ label, name }: { label: string; name: string }) {
       <label className="mb-1 block text-xs font-medium text-slate-500">{label}</label>
       <input type="date" name={name} className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
     </div>
+  )
+}
+
+const LIFESTYLE_META: Record<string, { statusHint: string; freqHint: string }> = {
+  smoking:   { statusHint: '如 吸烟中、已戒烟', freqHint: '如 每日10支' },
+  drinking:  { statusHint: '如 偶尔饮酒、已戒酒', freqHint: '如 每周2次' },
+  exercise:  { statusHint: '如 规律运动、偶尔运动', freqHint: '如 每周3次、每次30分钟' },
+  sleep:     { statusHint: '如 正常、失眠', freqHint: '如 每日7小时' },
+  diet:      { statusHint: '如 均衡饮食、低盐饮食', freqHint: '如 每日3餐' },
+}
+
+function LifestyleForm() {
+  const [cat, setCat] = useState('smoking')
+  const meta = LIFESTYLE_META[cat] ?? { statusHint: '', freqHint: '' }
+  return (
+    <>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-500">类别</label>
+        <select name="category" value={cat} onChange={(e) => setCat(e.target.value)} className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none">
+          <option value="smoking">吸烟</option>
+          <option value="drinking">饮酒</option>
+          <option value="exercise">运动</option>
+          <option value="sleep">睡眠</option>
+          <option value="diet">饮食</option>
+        </select>
+      </div>
+      <Field label="状态" name="status" required placeholder={meta.statusHint} />
+      <Field label="频次" name="frequency" placeholder={meta.freqHint} />
+      <DateField label="记录日期" name="recorded_at" />
+    </>
   )
 }

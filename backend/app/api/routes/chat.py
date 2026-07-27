@@ -58,7 +58,6 @@ def _file_to_data_url(file: UploadFile) -> str:
         return f"data:{mime};base64,{b64}"
 
     if mime == ALLOWED_PDF_TYPE:
-        # PDF — encode as base64, model provider handles PDF input
         b64 = base64.b64encode(content).decode("utf-8")
         return f"data:application/pdf;base64,{b64}"
 
@@ -131,7 +130,12 @@ async def chat_stream(
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
 ) -> StreamingResponse:
-    """SSE streaming chat endpoint. Supports optional image/PDF upload."""
+    """SSE streaming chat endpoint. Supports optional image/PDF upload.
+
+    Emits two event types:
+    - {"report": {...}} — report extraction result (when image/PDF attached)
+    - {"delta": "..."}  — streamed text chunks
+    """
     await _ensure_member(db, member_id)
 
     image_data_url = None
@@ -146,13 +150,13 @@ async def chat_stream(
 
     async def event_generator():
         try:
-            async for delta in service.chat_stream(
+            async for event_type, data in service.chat_stream(
                 member_id=member_id,
                 user_message=message,
                 image_data_url=image_data_url,
             ):
-                data = json.dumps({"delta": delta}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+                payload = json.dumps({event_type: data}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
         except ProviderNotConfiguredError as e:
             err = json.dumps({"error": str(e)}, ensure_ascii=False)
             yield f"data: {err}\n\n"

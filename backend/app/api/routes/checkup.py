@@ -1,14 +1,17 @@
 """Checkup recommendation endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.family import FamilyMember
+from app.models.health import CheckupReport
 from app.services.checkup_recommend import (
     build_health_profile,
     compute_completeness,
@@ -103,7 +106,44 @@ async def recommend(
         raise HTTPException(status_code=400, detail=f"budget_tier must be one of {valid_tiers}")
 
     result = await generate_recommendation(db, member_id, payload.budget_tier)
+    comp = result["completeness"]
+
+    # persist to DB
+    report = CheckupReport(
+        member_id=member_id,
+        budget_tier=payload.budget_tier,
+        content=result["content"],
+        completeness_score=comp["score"],
+        completeness_level=comp["level"],
+        missing_fields=json.dumps(comp["missing_fields"], ensure_ascii=False),
+    )
+    db.add(report)
+    await db.flush()
+
     return RecommendResponse(
         content=result["content"],
-        completeness=CompletenessOut(**result["completeness"]),
+        completeness=CompletenessOut(**comp),
+    )
+
+
+@router.get("/{member_id}/checkup-latest", response_model=Optional[RecommendResponse])
+async def get_latest_report(member_id: int, db: AsyncSession = Depends(get_db)):
+    """Return the most recent checkup report for a member, or null."""
+    r = await db.execute(
+        select(CheckupReport)
+        .where(CheckupReport.member_id == member_id)
+        .order_by(CheckupReport.created_at.desc())
+        .limit(1)
+    )
+    report = r.scalars().first()
+    if not report:
+        return None
+    missing = json.loads(report.missing_fields) if report.missing_fields else []
+    return RecommendResponse(
+        content=report.content,
+        completeness=CompletenessOut(
+            score=report.completeness_score,
+            level=report.completeness_level,
+            missing_fields=missing,
+        ),
     )

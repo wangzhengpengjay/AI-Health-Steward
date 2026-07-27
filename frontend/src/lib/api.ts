@@ -116,7 +116,7 @@ export const chatApi = {
     memberId: number,
     message: string,
     file?: File,
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<{ type: 'delta' | 'report' | 'error'; data: string }> {
     const formData = new FormData()
     formData.append('message', message)
     if (file) formData.append('file', file)
@@ -144,17 +144,19 @@ export const chatApi = {
           try {
             const parsed = JSON.parse(raw)
             if (parsed.delta) {
-              yield parsed.delta
+              yield { type: 'delta', data: parsed.delta }
+            } else if (parsed.report) {
+              yield { type: 'report', data: parsed.report }
             } else if (parsed.error) {
-              throw new Error(parsed.error)
+              yield { type: 'error', data: parsed.error }
             }
-          } catch {
-            // Not JSON, skip
-          }
-        }
-      }
+         } catch {
+           // Not JSON, skip
+         }
+       }
+     }
     }
-  },
+ },
 }
 
 // ---- Health Profile (diagnoses, medications, allergies) ----

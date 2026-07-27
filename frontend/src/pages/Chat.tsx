@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMemberStore } from '@/stores/memberStore'
-import { chatApi, reportsApi, type ReportRecord } from '@/lib/api'
+import { chatApi, type ReportRecord } from '@/lib/api'
 import type { ChatMessage } from '@/types'
 import ChatBubble from '@/components/ChatBubble'
 import ReportConfirmModal from '@/components/ReportConfirmModal'
@@ -107,12 +107,27 @@ export default function Chat() {
     setError(null)
     setIsStreaming(true)
     setStreamingContent('')
+    if (fileToSend) setExtractingReport(true)
 
     try {
       let fullContent = ''
       for await (const chunk of chatApi.stream(Number(currentMemberId), userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
-        fullContent += chunk
-        setStreamingContent(fullContent)
+        if (chunk.type === 'delta') {
+          fullContent += chunk.data
+          setStreamingContent(fullContent)
+       } else if (chunk.type === 'report') {
+         try {
+           const report = JSON.parse(chunk.data) as ReportRecord
+           if (report.status === 'pending') {
+             setPendingReport(report)
+             setExtractingReport(false)
+           }
+         } catch (e) {
+           console.error('Failed to parse report event:', e)
+         }
+        } else if (chunk.type === 'error') {
+          throw new Error(chunk.data)
+        }
       }
 
       const aiMsg: ChatMessage = {
@@ -130,23 +145,12 @@ export default function Chat() {
         timestamp: new Date().toISOString(),
       }
       setMessages((prev) => [...prev, aiMsg])
-  } finally {
-    setIsStreaming(false)
-    setStreamingContent('')
-    // If a file was sent, trigger report extraction in background
-    if (fileToSend) {
-      setExtractingReport(true)
-      try {
-        const report = await reportsApi.upload(Number(currentMemberId), fileToSend, 'chat')
-        setPendingReport(report)
-      } catch (err) {
-        console.error('Report extraction failed:', err)
-      } finally {
-        setExtractingReport(false)
-      }
+    } finally {
+      setIsStreaming(false)
+      setStreamingContent('')
+      setExtractingReport(false)
     }
   }
-}
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -193,17 +197,17 @@ export default function Chat() {
                 <p>"血糖 6.5 正常吗？"</p>
                 <p>"我哪些指标不正常？"</p>
                 <p>"我今天测了血压 130/85"</p>
-            <p className="text-primary">也支持上传报告图片/PDF，AI 直接解读</p>
-   </div>
+                <p className="text-primary">也支持上传报告图片/PDF，AI 直接解读</p>
+              </div>
+            </div>
           </div>
-</div>
-   )}
+        )}
 
-    {messages.map((msg, i) => (
-         <ChatBubble key={i} message={msg} />
-       ))}
+        {messages.map((msg, i) => (
+          <ChatBubble key={i} message={msg} />
+        ))}
 
-       {isStreaming && (
+        {isStreaming && (
           <ChatBubble
             message={{
               role: 'assistant',
@@ -241,8 +245,8 @@ export default function Chat() {
         </div>
       )}
 
-     {/* Input */}
-     <div className="border-t border-slate-200 bg-white px-6 py-4">
+      {/* Input */}
+      <div className="border-t border-slate-200 bg-white px-6 py-4">
         {/* Report extraction card */}
         {extractingReport && (
           <div className="mb-3 flex items-center gap-2 rounded-field border border-blue-200 bg-blue-50 px-4 py-2">
@@ -273,7 +277,7 @@ export default function Chat() {
             </button>
           </div>
         )}
-       <div className="flex items-end gap-3">
+        <div className="flex items-end gap-3">
           <input
             ref={fileInputRef}
             type="file"
@@ -310,14 +314,14 @@ export default function Chat() {
         </div>
       </div>
 
-     {/* Report confirm modal */}
-     {showReportModal && pendingReport && (
-       <ReportConfirmModal
-         report={pendingReport}
-         uploadSource="chat"
-         onClose={() => { setShowReportModal(false); setPendingReport(null) }}
-       />
-     )}
+      {/* Report confirm modal */}
+      {showReportModal && pendingReport && (
+        <ReportConfirmModal
+          report={pendingReport}
+          uploadSource="chat"
+          onClose={() => { setShowReportModal(false); setPendingReport(null) }}
+        />
+      )}
     </div>
   )
 }
