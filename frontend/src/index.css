@@ -63,3 +63,12 @@
     @apply w-full rounded-field border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary;
   }
 }
+
+/* Narrow markdown hr to avoid full-width visual break */
+.prose hr {
+  max-width: 50%;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  margin-left: auto;
+  margin-right: auto;
+}
