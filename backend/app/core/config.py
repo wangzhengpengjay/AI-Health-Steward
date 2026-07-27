@@ -1,14 +1,29 @@
 """Application settings loaded from environment / .env."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _find_env_file() -> str:
+    """Locate .env: prefer /app/.env (Docker), fall back to ../.env (local dev)."""
+    candidates = [
+        "/app/.env",            # Docker container
+        "../.env",              # local dev (backend/ is cwd)
+        str(Path(__file__).resolve().parents[3] / ".env"),  # project root from config.py
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return "../.env"  # default fallback
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="../.env",
+        env_file=_find_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -67,6 +82,15 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def env_file_path(self) -> str:
+        return self.model_config.get("env_file", "")
+
+    def reload(self) -> "Settings":
+        """Reload settings from .env file (after writing new config)."""
+        get_settings.cache_clear()
+        return get_settings()
 
 
 @lru_cache

@@ -101,6 +101,6 @@ class ModelProvider(ABC):
         ...
 
     @abstractmethod
-    async def health_check(self) -> bool:
-        """Check if the provider is reachable."""
+    async def health_check(self) -> dict:
+        """Check if the provider is reachable. Returns {status, latency_ms, error}."""
         ...

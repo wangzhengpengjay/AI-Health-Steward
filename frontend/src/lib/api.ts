@@ -420,3 +420,62 @@ export const checkupApi = {
  getLatest: (memberId: number) =>
    request<RecommendResponse | null>(`/members/${memberId}/checkup-latest`),
 }
+
+// ---- Settings ----
+
+export interface ProviderConfig {
+  base_url: string
+  api_key: string
+  model: string
+  is_configured: boolean
+}
+
+export interface ProviderConfigResponse {
+  multimodal_api: ProviderConfig
+  text_api: ProviderConfig
+  local_llm: ProviderConfig
+  text_provider_priority: string
+}
+
+export interface ProviderHealthResult {
+  status: string
+  latency_ms?: number
+  error?: string
+}
+
+export const settingsApi = {
+  getProviders: () =>
+    request<ProviderConfigResponse>('/settings/providers'),
+
+  checkHealth: () =>
+    request<Record<string, ProviderHealthResult>>('/settings/providers/health'),
+
+  exportData: () =>
+    fetch(`${BASE_URL}/settings/export`).then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.blob()
+    }),
+
+  wipeData: () =>
+    request<{ deleted: boolean; message: string }>('/settings/data?confirm=DELETE', {
+      method: 'DELETE',
+    }),
+
+  updateProviders: (data: ProviderUpdatePayload) =>
+    request<{ updated: boolean; fields: string[]; message: string }>('/settings/providers', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+}
+
+export interface ProviderUpdatePayload {
+  multimodal_api_base?: string
+  multimodal_api_key?: string
+  multimodal_api_model?: string
+  text_api_base?: string
+  text_api_key?: string
+  text_api_model?: string
+  local_llm_base?: string
+  local_llm_model?: string
+  text_provider_priority?: string
+}

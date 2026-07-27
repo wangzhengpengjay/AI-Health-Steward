@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.family import FamilyMember
-from app.models.health import ReportRecord
+from app.models.health import MetricRecord, ReportRecord
 from app.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from app.providers.router import ModelRouter
 from app.services.tools.registry import ToolRegistry
@@ -94,7 +94,7 @@ EXTRACT_PROMPT = """\
   ],
   "lab_tests": [
     {
-      "report_name": "检验报告名称，如 血常规/肝功能/肾功能",
+      "report_name": "检验报告名称，单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
       "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
       "value": 数值,
       "unit": "单位",
@@ -105,7 +105,7 @@ EXTRACT_PROMPT = """\
   ],
   "exam_findings": [
     {
-      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等",
+      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准类别名",
       "finding_desc": "具体诊断描述，如 右肺水平裂旁微小磨玻璃结节",
       "value_num": "可量化的数值或null",
       "unit": "数值的单位或null",
@@ -270,7 +270,22 @@ class ConsultationService:
         )
         members = members_result.scalars().all()
         member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
-        prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}"
+        # Fetch existing lab report_name tabs and exam category tabs for this member
+        existing_result = await self.db.execute(
+            select(MetricRecord.metric_name).where(
+                MetricRecord.member_id == member_id,
+                MetricRecord.metric_name.like('lab:%') | MetricRecord.metric_name.like('exam:%'),
+            ).distinct()
+        )
+        existing_names = [r[0] for r in existing_result.all()]
+        existing_lab_reports = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('lab:') and len(n.split(':')) >= 3})
+        existing_exam_cats = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('exam:') and len(n.split(':')) >= 3})
+
+        tabs_hint = f"\n已有检验报告标签：{existing_lab_reports}" if existing_lab_reports else "\n已有检验报告标签：无"
+        tabs_hint += f"\n已有检查分类标签：{existing_exam_cats}" if existing_exam_cats else "\n已有检查分类标签：无"
+        tabs_hint += "\n重要：report_name 和 finding_category 必须优先复用已有标签，仅当无法匹配时才新建简短标准名。"
+
+        prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
         multimodal = self.router.get_multimodal_provider()
         messages = [

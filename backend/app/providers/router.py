@@ -13,7 +13,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.providers.base import (
     Message,
     ModelProvider,
@@ -34,19 +34,20 @@ class ModelRouter:
     """Routes requests to the appropriate model provider."""
 
     def __init__(self):
+        _s = get_settings()
         self._multimodal = MultimodalAPIProvider(
-            base_url=settings.MULTIMODAL_API_BASE,
-            api_key=settings.MULTIMODAL_API_KEY,
-            model=settings.MULTIMODAL_API_MODEL,
+            base_url=_s.MULTIMODAL_API_BASE,
+            api_key=_s.MULTIMODAL_API_KEY,
+            model=_s.MULTIMODAL_API_MODEL,
         )
         self._text_api = TextAPIProvider(
-            base_url=settings.TEXT_API_BASE,
-            api_key=settings.TEXT_API_KEY,
-            model=settings.TEXT_API_MODEL,
+            base_url=_s.TEXT_API_BASE,
+            api_key=_s.TEXT_API_KEY,
+            model=_s.TEXT_API_MODEL,
         )
         self._local_llm = LocalLLMProvider(
-            base_url=settings.LOCAL_LLM_BASE,
-            model=settings.LOCAL_LLM_MODEL,
+            base_url=_s.LOCAL_LLM_BASE,
+            model=_s.LOCAL_LLM_MODEL,
         )
 
     @property
@@ -74,7 +75,7 @@ class ModelRouter:
 
         Falls back to the other text provider if the priority one is not configured.
         """
-        priority = settings.TEXT_PROVIDER_PRIORITY
+        priority = get_settings().TEXT_PROVIDER_PRIORITY
 
         if priority == "local_llm":
             if self._local_llm.is_configured:
@@ -118,7 +119,7 @@ class ModelRouter:
                 "model": self._local_llm.model,
                 "capabilities": ["text", "tool_calling"],
             },
-            "text_priority": settings.TEXT_PROVIDER_PRIORITY,
+            "text_priority": get_settings().TEXT_PROVIDER_PRIORITY,
             "multimodal_available": self.has_multimodal(),
             "text_available": self.has_text(),
         }

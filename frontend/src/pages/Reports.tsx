@@ -35,6 +35,7 @@ export default function Reports() {
   const { currentMemberId, members } = useMemberStore()
  const queryClient = useQueryClient()
  const [selectedReport, setSelectedReport] = useState<ReportRecord | null>(null)
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentMember = members.find((m) => m.id === currentMemberId)
@@ -96,7 +97,7 @@ export default function Reports() {
           disabled={uploadMutation.isPending}
           className="flex items-center gap-1.5 rounded-field bg-primary px-3 py-2 text-sm text-white transition hover:bg-primary-hover disabled:opacity-50"
         >
-          <span className="material-symbols-rounded text-lg">
+          <span className={`material-symbols-rounded text-lg ${uploadMutation.isPending ? 'animate-spin' : ''}`}>
             {uploadMutation.isPending ? 'progress_activity' : 'upload'}
           </span>
           {uploadMutation.isPending ? '解析中...' : '上传报告'}
@@ -132,12 +133,19 @@ export default function Reports() {
                   key={r.id}
                   className="flex items-center gap-4 rounded-card border border-slate-200 bg-white p-4 transition hover:border-primary/30"
                 >
-                  {/* File icon */}
-                  <div className="flex h-12 w-12 items-center justify-center rounded-field bg-slate-50">
-                    <span className="material-symbols-rounded text-slate-400">
-                      {r.file_type === 'application/pdf' ? 'picture_as_pdf' : 'image'}
-                    </span>
-                  </div>
+                  {/* File thumbnail */}
+                  {r.file_type === 'application/pdf' ? (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-field bg-slate-50">
+                      <span className="material-symbols-rounded text-slate-400">picture_as_pdf</span>
+                    </div>
+                  ) : (
+                    <img
+                      src={`/api/v1/members/${currentMemberId}/reports/${r.id}/file`}
+                      alt={r.file_name}
+                      className="h-12 w-12 cursor-pointer rounded-field object-cover ring-1 ring-slate-200 transition hover:ring-primary"
+                      onClick={() => setPreviewImage(`/api/v1/members/${currentMemberId}/reports/${r.id}/file`)}
+                    />
+                  )}
 
                   {/* Info */}
                   <div className="flex-1 min-w-0">
@@ -215,6 +223,27 @@ export default function Reports() {
           report={selectedReport}
           onClose={() => setSelectedReport(null)}
         />
+      )}
+
+      {/* Image preview modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8"
+          onClick={() => setPreviewImage(null)}
+        >
+          <img
+            src={previewImage}
+            alt="报告原图"
+            className="max-h-full max-w-full rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white hover:bg-white/30"
+            onClick={() => setPreviewImage(null)}
+          >
+            <span className="material-symbols-rounded">close</span>
+          </button>
+        </div>
       )}
     </div>
   )

@@ -153,13 +153,19 @@ class TextAPIProvider(ModelProvider):
                     if content := delta.get("content"):
                         yield content
 
-    async def health_check(self) -> bool:
+    async def health_check(self) -> dict:
+        import time
+        t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/models",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                 )
-                return resp.status_code == 200
-        except Exception:
-            return False
+                ms = int((time.monotonic() - t0) * 1000)
+                if resp.status_code == 200:
+                    return {"status": "ok", "latency_ms": ms}
+                return {"status": "error", "latency_ms": ms, "error": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            ms = int((time.monotonic() - t0) * 1000)
+            return {"status": "error", "latency_ms": ms, "error": str(e)}

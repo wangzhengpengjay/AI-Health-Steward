@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+from pathlib import Path
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -23,6 +25,9 @@ router = APIRouter(prefix="/members", tags=["reports"])
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 EXTRACT_PROMPT = """\
 你是一个医疗报告解析助手。请仔细分析上传的健康报告图片/PDF，提取以下结构化信息。
@@ -65,7 +70,7 @@ EXTRACT_PROMPT = """\
   ],
   "lab_tests": [
     {
-      "report_name": "检验报告名称，如 血常规/肝功能/肾功能",
+      "report_name": "检验报告名称，单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
       "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
       "value": 数值,
       "unit": "单位",
@@ -76,7 +81,7 @@ EXTRACT_PROMPT = """\
   ],
   "exam_findings": [
     {
-      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等。用于归类聚合，必须是简短的标准类别名",
+      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准类别名",
       "finding_desc": "该检查发现的具体诊断描述，如 右肺水平裂旁微小磨玻璃结节/左叶甲状腺低回声结节 等",
       "value_num": 可量化的数值或null，如结节大小3则填3，
       "unit": "数值的单位或null，如 mm",
@@ -181,13 +186,19 @@ async def _ensure_member(db: AsyncSession, member_id: int) -> None:
         raise HTTPException(status_code=404, detail=f"FamilyMember {member_id} not found")
 
 
-def _file_to_data_url(file: UploadFile) -> tuple[str, str, int]:
+def _save_and_convert(file: UploadFile, record_id: int) -> tuple[str, str, int]:
+    """Save file to disk and return (data_url, mime, size)."""
     content = file.file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="文件过大，请上传 20MB 以内的文件")
     mime = file.content_type or "application/octet-stream"
     if mime not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail=f"不支持的文件类型: {mime}，仅支持 JPG/PNG/WebP/PDF")
+    # Save to disk
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+    ext = ext_map.get(mime, ".bin")
+    file_path = UPLOAD_DIR / f"{record_id}{ext}"
+    file_path.write_bytes(content)
     b64 = base64.b64encode(content).decode("utf-8")
     return f"data:{mime};base64,{b64}", mime, len(content)
 
@@ -249,9 +260,17 @@ async def upload_report(
 ) -> ReportRecordResponse:
     """Upload a report file, create record, run AI extraction, return result."""
     await _ensure_member(db, member_id)
-    data_url, mime, size = _file_to_data_url(file)
 
-    # Create report record
+    # Read file content first to get mime/size
+    content = file.file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="文件过大，请上传 20MB 以内的文件")
+    mime = file.content_type or "application/octet-stream"
+    if mime not in ALLOWED_TYPES:
+        raise HTTPException(status_code=415, detail=f"不支持的文件类型: {mime}，仅支持 JPG/PNG/WebP/PDF")
+    size = len(content)
+
+    # Create report record first to get id
     record = ReportRecord(
         member_id=member_id,
         file_name=file.filename or "unknown",
@@ -263,6 +282,16 @@ async def upload_report(
     db.add(record)
     await db.flush()
 
+    # Save file to disk using record.id
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+    ext = ext_map.get(mime, ".bin")
+    file_path = UPLOAD_DIR / f"{record.id}{ext}"
+    file_path.write_bytes(content)
+
+    # Build data_url for AI extraction
+    b64 = base64.b64encode(content).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
+
     # Run extraction
     provider = model_router.get_multimodal_provider()
     members_result = await db.execute(
@@ -270,7 +299,22 @@ async def upload_report(
     )
     members = members_result.scalars().all()
     member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
-    prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}"
+    # Fetch existing lab report_name tabs and exam category tabs for this member
+    existing_result = await db.execute(
+        select(MetricRecord.metric_name).where(
+            MetricRecord.member_id == member_id,
+            MetricRecord.metric_name.like('lab:%') | MetricRecord.metric_name.like('exam:%'),
+        ).distinct()
+    )
+    existing_names = [r[0] for r in existing_result.all()]
+    existing_lab_reports = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('lab:') and len(n.split(':')) >= 3})
+    existing_exam_cats = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('exam:') and len(n.split(':')) >= 3})
+
+    tabs_hint = f"\n已有检验报告标签：{existing_lab_reports}" if existing_lab_reports else "\n已有检验报告标签：无"
+    tabs_hint += f"\n已有检查分类标签：{existing_exam_cats}" if existing_exam_cats else "\n已有检查分类标签：无"
+    tabs_hint += "\n重要：report_name 和 finding_category 必须优先复用已有标签，仅当无法匹配时才新建简短标准名。"
+
+    prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
     messages = [
         Message(role="system", content=prompt),
@@ -469,6 +513,33 @@ async def confirm_report(
         saved_lab_tests=saved_lab_tests,
         saved_exam_findings=saved_exam_findings,
     )
+
+
+
+@router.get("/{member_id}/reports/{report_id}/file")
+async def get_report_file(
+    member_id: int,
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the original uploaded file for thumbnail/preview."""
+    result = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    r = result.scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    # Find file on disk
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+    ext = ext_map.get(r.file_type, ".bin")
+    file_path = UPLOAD_DIR / f"{report_id}{ext}"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件未找到")
+    from fastapi.responses import FileResponse
+    return FileResponse(path=str(file_path), media_type=r.file_type)
 
 
 @router.delete("/{member_id}/reports/{report_id}")

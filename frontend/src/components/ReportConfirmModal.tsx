@@ -289,10 +289,10 @@ export default function ReportConfirmModal({ report, uploadSource = 'metric_inpu
                 )}
                 <button
                   onClick={() => currentMemberId && confirmMutation.mutate(Number(currentMemberId))}
-                  disabled={confirmMutation.isPending || (selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size === 0)}
+                  disabled={confirmMutation.isPending}
                   className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
                 >
-                  {confirmMutation.isPending ? '保存中...' : `确认入档 (${selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size})`}
+                  {confirmMutation.isPending ? '保存中...' : '确认入档'}
                 </button>
               </div>
             )}
