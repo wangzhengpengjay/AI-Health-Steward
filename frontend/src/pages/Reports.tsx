@@ -44,6 +44,11 @@ export default function Reports() {
     queryKey: ['reports', currentMemberId],
     queryFn: () => reportsApi.list(Number(currentMemberId)),
     enabled: !!currentMemberId,
+    // Poll while any report is in extracting state
+    refetchInterval: (query) => {
+      const data = query.state.data as ReportRecord[] | undefined
+      return data?.some(r => r.status === 'extracting') ? 3000 : false
+    },
   })
 
   const uploadMutation = useMutation({
@@ -57,6 +62,22 @@ export default function Reports() {
   const deleteMutation = useMutation({
     mutationFn: ({ memberId, reportId }: { memberId: number; reportId: number }) =>
       reportsApi.delete(memberId, reportId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports', currentMemberId] })
+    },
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: ({ memberId, reportId }: { memberId: number; reportId: number }) =>
+      reportsApi.retry(memberId, reportId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports', currentMemberId] })
+    },
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: ({ memberId, reportId }: { memberId: number; reportId: number }) =>
+      reportsApi.cancel(memberId, reportId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reports', currentMemberId] })
     },
@@ -182,6 +203,27 @@ export default function Reports() {
                       >
                         <span className="material-symbols-rounded text-sm">check_circle</span>
                         确认入档
+                      </button>
+                    )}
+                    {isPending && (
+                      <button
+                        onClick={() => cancelMutation.mutate({ memberId: Number(currentMemberId), reportId: r.id })}
+                        className="flex items-center gap-1 rounded-field border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                      >
+                        <span className="material-symbols-rounded text-sm">close</span>
+                        取消
+                      </button>
+                    )}
+                    {r.status === 'rejected' && (
+                      <button
+                        onClick={() => retryMutation.mutate({ memberId: Number(currentMemberId), reportId: r.id })}
+                        disabled={retryMutation.isPending}
+                        className="flex items-center gap-1 rounded-field bg-amber-500 px-3 py-1.5 text-xs text-white hover:bg-amber-600 disabled:opacity-50"
+                      >
+                        <span className={`material-symbols-rounded text-sm ${retryMutation.isPending ? 'animate-spin' : ''}`}>
+                          {retryMutation.isPending ? 'progress_activity' : 'refresh'}
+                        </span>
+                        {retryMutation.isPending ? '重试中...' : '重新解析'}
                       </button>
                     )}
                     {r.status === 'archived' && r.extraction && (

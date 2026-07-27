@@ -1,0 +1,162 @@
+# 部署指南
+
+## 一、Docker Compose 一键部署（推荐）
+
+### 前置要求
+
+- Docker 20.10+ 及 Docker Compose v2+
+- 模型 API Key（OpenAI 兼容接口）
+- 最低配置：2 核 CPU / 2GB 内存 / 10GB 磁盘
+
+### 步骤
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/wangzhengpengjay/AI-Health-Steward.git
+cd AI-Health-Steward
+
+# 2. 复制环境配置
+cp .env.example .env
+
+# 3. 编辑 .env，至少配置以下项：
+#    MULTIMODAL_API_BASE / MULTIMODAL_API_KEY / MULTIMODAL_API_MODEL  （必选）
+#    TEXT_API_BASE / TEXT_API_KEY / TEXT_API_MODEL                    （推荐）
+#    POSTGRES_PASSWORD                                                 （生产环境务必修改）
+#    EMBEDDING_MODEL                                                   （可选，用于 RAG 报告检索）
+
+# 4. 同步配置到 backend/.env（Docker 挂载使用此文件）
+cp .env backend/.env
+
+# 5. 一键启动
+docker compose up -d
+
+# 6. 初始化数据库（首次部署）
+docker exec health-steward-backend alembic upgrade head
+
+# 7. 访问
+# WebUI:  http://localhost:5173
+# API 文档: http://localhost:8000/docs
+```
+
+### 常用命令
+
+```bash
+# 查看日志
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# 重启服务
+docker compose restart backend
+
+# 重建后端（代码变更后）
+docker compose up -d --force-recreate backend
+
+# 停止所有服务
+docker compose down
+
+# 停止并清除数据（谨慎）
+docker compose down -v
+```
+
+## 二、配置说明
+
+### 模型配置
+
+| 配置项 | 说明 | 必选 |
+|--------|------|------|
+| `MULTIMODAL_API_BASE` | 多模态模型 API 地址（OpenAI 兼容） | 是 |
+| `MULTIMODAL_API_KEY` | 多模态模型 API Key | 是 |
+| `MULTIMODAL_API_MODEL` | 多模态模型名称（需支持视觉） | 是 |
+| `TEXT_API_BASE` | 文字模型 API 地址 | 推荐 |
+| `TEXT_API_KEY` | 文字模型 API Key | 推荐 |
+| `TEXT_API_MODEL` | 文字模型名称 | 推荐 |
+| `LOCAL_LLM_BASE` | 本地 LLM 地址（如 Ollama） | 可选 |
+| `LOCAL_LLM_MODEL` | 本地 LLM 模型名称 | 可选 |
+| `TEXT_PROVIDER_PRIORITY` | 文字模型优先级：`text_api` 或 `local_llm` | 默认 text_api |
+| `EMBEDDING_API_BASE` | Embedding API 地址（留空回退到 TEXT_API_BASE） | 可选 |
+| `EMBEDDING_API_KEY` | Embedding API Key（留空回退到 TEXT_API_KEY） | 可选 |
+| `EMBEDDING_MODEL` | Embedding 模型名称（用于 RAG 检索） | 可选 |
+
+### 数据库配置
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `POSTGRES_HOST` | postgres | Docker 模式用容器名，本地开发用 localhost |
+| `POSTGRES_PORT` | 5432 | |
+| `POSTGRES_DB` | health_steward | |
+| `POSTGRES_USER` | health | |
+| `POSTGRES_PASSWORD` | changeme | **生产环境务必修改** |
+
+### 应用配置
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `APP_HOST` | 0.0.0.0 | |
+| `APP_PORT` | 8000 | |
+| `APP_DEBUG` | true | 生产环境建议设为 false |
+| `CORS_ORIGINS` | http://localhost:5173 | 多个用逗号分隔 |
+
+## 三、飞书 Bot 配置
+
+### 创建飞书应用
+
+1. 前往[飞书开放平台](https://open.feishu.cn/)创建企业自建应用
+2. 开启**机器人能力**
+3. 获取 `App ID` 和 `App Secret`
+
+### 配置权限
+
+在应用管理页面添加以下权限：
+- `im:message` — 获取与发送单聊、群组消息
+- `im:message:readonly` — 获取单聊、群组消息（读取消息内容）
+- `im:resource` — 获取消息中的资源文件（下载图片）
+
+### 启用 WebSocket 模式
+
+1. 在「事件与回调」页面选择「长连接模式」
+2. 订阅事件：`im.message.receive_v1`（接收消息）
+
+### 在系统中配置
+
+1. 打开 WebUI → 设置 → 飞书渠道
+2. 点击「添加渠道」
+3. 填写渠道名称、App ID、App Secret
+4. 选择绑定的家庭成员（该渠道接收的消息和图片将归到此成员）
+5. 保存后自动建立 WebSocket 连接
+
+支持配置多个飞书渠道，每个渠道绑定不同的家庭成员。
+
+## 四、本地开发部署
+
+```bash
+# 1. 启动数据库
+docker compose up -d postgres
+
+# 2. 后端
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp ../.env .env  # 复制配置
+# 修改 POSTGRES_HOST=localhost
+alembic upgrade head
+uvicorn app.main:app --reload --port 8000
+
+# 3. 前端
+cd frontend
+npm install
+npm run dev
+
+# 4. 访问 http://localhost:5173
+```
+
+## 五、数据备份与恢复
+
+```bash
+# 备份
+docker exec health-steward-db pg_dump -U health health_steward > backup.sql
+
+# 恢复
+docker exec -i health-steward-db psql -U health health_steward < backup.sql
+```
+
+上传的原始报告文件存储在 `upload_data` Docker volume 中。

@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     # Text provider routing: text_api | local_llm
     TEXT_PROVIDER_PRIORITY: str = "text_api"
 
+    # Embedding model (for RAG knowledge base)
+    EMBEDDING_API_BASE: str = ""  # defaults to TEXT_API_BASE if empty
+    EMBEDDING_API_KEY: str = ""   # defaults to TEXT_API_KEY if empty
+    EMBEDDING_MODEL: str = ""
+
     # Feishu bot (V0.4)
     FEISHU_APP_ID: str = ""
     FEISHU_APP_SECRET: str = ""

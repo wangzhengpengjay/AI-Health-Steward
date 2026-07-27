@@ -65,7 +65,7 @@ EXTRACT_PROMPT = """\
 请严格按照以下JSON格式返回（不要包含markdown代码块标记）：
 {
   "patient_name": "报告中识别到的姓名，没有则为null",
-  "report_type": "报告类型，如 体检报告/血液检查/血压记录 等",
+  "report_type": "报告类型，如：检查报告单、检验报告单、血压记录、血糖记录、其他 等",
   "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
   "metrics": [
     {

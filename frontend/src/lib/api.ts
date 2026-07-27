@@ -361,6 +361,12 @@ export const reportsApi = {
 
   delete: (memberId: number, reportId: number) =>
     request<{ ok: boolean }>(`/members/${memberId}/reports/${reportId}`, { method: 'DELETE' }),
+
+  retry: (memberId: number, reportId: number) =>
+    request<ReportRecord>(`/members/${memberId}/reports/${reportId}/retry`, { method: 'POST' }),
+
+  cancel: (memberId: number, reportId: number) =>
+    request<ReportRecord>(`/members/${memberId}/reports/${reportId}/cancel`, { method: 'POST' }),
 }
 
 // ---- Checkup Recommendation ----

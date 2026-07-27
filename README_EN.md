@@ -21,6 +21,8 @@
 - **Report Management** — Full report lifecycle (upload → AI extraction → confirm → archive), with three upload entry points: report page, metric page, and AI chat
 - **Lab & Exam Tracking** — Lab metrics grouped by report with per-test trend charts; exam findings displayed on a category timeline
 - **AI Image Interpretation** — Send report images in chat; AI extracts structured data first, then provides professional interpretation based on the extracted data, with one-click archiving
+- **Report Semantic Search (RAG)** — Archived reports are automatically vectorized; AI consultations can semantically retrieve historical report content
+- **System Settings** — Visual management of model configs, health checks, data export/wipe via the UI; changes take effect immediately
 
 ## Quick Start
 
@@ -41,13 +43,28 @@ cd AI-Health-Steward
 cp .env.example .env
 # Edit .env — at minimum, set MULTIMODAL_API_KEY and TEXT_API_KEY
 
-# 3. One-command startup
-docker-compose up -d
+# 3. Sync config to backend/.env
+cp .env backend/.env
 
-# 4. Access
+# 4. One-command startup
+docker compose up -d
+
+# 5. Initialize database (first deploy)
+docker exec health-steward-backend alembic upgrade head
+
+# 6. Access
 # WebUI: http://localhost:5173
 # API Docs: http://localhost:8000/docs
 ```
+
+### Quick Trial
+
+```bash
+# Import demo data (optional)
+docker exec health-steward-backend python -m scripts.seed_demo_data
+```
+
+See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 
 ## Tech Stack
 
@@ -93,9 +110,9 @@ AI-Health-Steward/
 |---------|------|--------|
 | V0.1 | Project scaffold & data foundation | ✅ Done |
 | V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
-| V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations | 🔧 In Progress |
+| V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations, RAG | ✅ Done |
 | V0.4 | Feishu channel — multi-channel management, data collection, lightweight Q&A | ✅ Done |
-| V1.0 | Open-source release — docs, one-click deploy | Planned |
+| V1.0 | Open-source release — docs, one-click deploy | 🔧 In Progress |
 
 ## Screenshots
 
@@ -114,6 +131,13 @@ See [Privacy Statement](PRIVACY.md) for details.
 ## Contributing
 
 Issues and PRs are welcome! Please read the [Contributing Guide](CONTRIBUTING.md) first.
+
+## Documentation
+
+- [Deployment Guide](DEPLOYMENT.md) — Docker setup, configuration, Feishu bot setup
+- [Developer Guide](DEVELOPMENT.md) — Architecture, extension guides (Provider / Tools / Channels)
+- [Privacy Statement](PRIVACY.md) — Data storage and model API boundaries
+- [Contributing Guide](CONTRIBUTING.md) — Dev environment and code conventions
 
 ## License
 

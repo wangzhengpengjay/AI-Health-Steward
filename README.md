@@ -20,6 +20,8 @@
 - **报告管理** — 报告全生命周期管理（上传→AI抽取→确认入档→归档），支持从报告管理页、指标管理页、AI 咨询页三个入口上传，入档数据自动归入健康画像
 - **检验检查追踪** — 检验指标按报告分组独立曲线追踪，检查异常发现按分类时间轴展示
 - **AI 图片解读** — 咨询中发送报告图片，AI 先多模态抽取结构化数据，再基于数据做专业解读，同时支持一键入档
+- **报告语义检索 (RAG)** — 入档报告自动向量化，AI 咨询可语义检索历史报告内容回答问题
+- **系统设置** — 前端可视化管理模型配置、健康检测、数据导出/清除，配置即时写入生效
 
 ## 快速开始
 
@@ -40,13 +42,28 @@ cd ai-health-steward
 cp .env.example .env
 # 编辑 .env，至少配置 MULTIMODAL_API_KEY 和 TEXT_API_KEY
 
-# 3. 一键启动
-docker-compose up -d
+# 3. 同步配置到 backend/.env
+cp .env backend/.env
 
-# 4. 访问
+# 4. 一键启动
+docker compose up -d
+
+# 5. 初始化数据库（首次部署）
+docker exec health-steward-backend alembic upgrade head
+
+# 6. 访问
 # WebUI: http://localhost:5173
 # API 文档: http://localhost:8000/docs
 ```
+
+### 快速体验
+
+```bash
+# 导入演示数据（可选）
+docker exec health-steward-backend python -m scripts.seed_demo_data
+```
+
+详细部署说明请参阅[部署指南](DEPLOYMENT.md)。
 
 ## 技术栈
 
@@ -100,9 +117,9 @@ ai-health-steward/
 |------|------|------|
 | V0.1 | 项目骨架与数据地基 — 能存数据、能看画像 | ✅ 已完成 |
 | V0.2 | AI 咨询能力 — 意图路由、工具调用、对话界面 | ✅ 已完成 |
-| V0.3 | 报告导入与可视化 — 多模态抽取、趋势图、画像看板、报告管理、体检推荐 | 🔧 开发中 |
+| V0.3 | 报告导入与可视化 — 多模态抽取、趋势图、画像看板、报告管理、体检推荐、RAG | ✅ 已完成 |
 | V0.4 | 飞书渠道 — 多渠道管理、资料收集、轻问答 | ✅ 已完成 |
-| V1.0 | 开源发布 — 文档完善、一键部署 | 规划中 |
+| V1.0 | 开源发布 — 文档完善、一键部署 | 🔧 进行中 |
 
 ## 项目截图
 
@@ -122,6 +139,13 @@ ai-health-steward/
 ## 贡献
 
 欢迎提交 Issue 和 PR。请先阅读 [贡献指南](CONTRIBUTING.md) 和 [需求文档](openspec/changes/ai-health-steward/proposal.md) 了解项目方向。
+
+## 文档
+
+- [部署指南](DEPLOYMENT.md) — Docker 部署、配置说明、飞书 Bot 配置
+- [开发者文档](DEVELOPMENT.md) — 项目架构、扩展指南（Provider / 工具 / 渠道）
+- [隐私声明](PRIVACY.md) — 数据存储与模型调用边界
+- [贡献指南](CONTRIBUTING.md) — 开发环境与代码规范
 
 ## License
 

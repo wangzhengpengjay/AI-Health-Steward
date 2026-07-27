@@ -25,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from pgvector.sqlalchemy import Vector
 
 
 class MetricRecord(Base):
@@ -277,4 +278,29 @@ class ReportRecord(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class ReportChunk(Base):
+    """Vectorized report text chunk for RAG retrieval.
+
+    One row per archived report. Stores the text representation used for
+    semantic search plus its embedding vector (pgvector).
+    """
+
+    __tablename__ = "report_chunks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    report_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("report_records.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # pgvector column — dimension set at migration time (1024 is common for many embedding models)
+    embedding = mapped_column(Vector(1024), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

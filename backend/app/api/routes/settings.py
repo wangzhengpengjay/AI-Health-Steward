@@ -75,6 +75,12 @@ async def get_provider_config() -> dict[str, Any]:
             "is_configured": True,
         },
         "text_provider_priority": _s.TEXT_PROVIDER_PRIORITY,
+        "embedding": {
+            "base_url": _s.EMBEDDING_API_BASE or _s.TEXT_API_BASE,
+            "api_key": _mask(_s.EMBEDDING_API_KEY or _s.TEXT_API_KEY),
+            "model": _s.EMBEDDING_MODEL,
+            "is_configured": bool(_s.EMBEDDING_MODEL),
+        },
     }
 
 
@@ -91,6 +97,9 @@ class ProviderUpdatePayload(BaseModel):
     local_llm_base: Optional[str] = None
     local_llm_model: Optional[str] = None
     text_provider_priority: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_model: Optional[str] = None
 
 
 # Maps payload field names to .env variable names
@@ -104,6 +113,9 @@ _FIELD_TO_ENV: dict[str, str] = {
     "local_llm_base": "LOCAL_LLM_BASE",
     "local_llm_model": "LOCAL_LLM_MODEL",
     "text_provider_priority": "TEXT_PROVIDER_PRIORITY",
+    "embedding_api_base": "EMBEDDING_API_BASE",
+    "embedding_api_key": "EMBEDDING_API_KEY",
+    "embedding_model": "EMBEDDING_MODEL",
 }
 
 
@@ -199,6 +211,10 @@ async def providers_health(
         results["text_api"] = await router_dep.text_api_provider.health_check()
     if router_dep.local_llm_provider.is_configured:
         results["local_llm"] = await router_dep.local_llm_provider.health_check()
+    from app.providers.embedding import EmbeddingProvider
+    emb = EmbeddingProvider()
+    if emb.is_configured:
+        results["embedding"] = await emb.health_check()
     return results
 
 

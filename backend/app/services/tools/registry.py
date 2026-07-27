@@ -7,6 +7,7 @@ from app.services.tools.extract_and_save import ExtractAndSaveTool
 from app.services.tools.query_abnormal import QueryAbnormalTool
 from app.services.tools.query_metrics import QueryMetricsTool
 from app.services.tools.query_profile import QueryProfileTool
+from app.services.tools.query_reports import QueryReportsTool
 
 
 class ToolRegistry:
@@ -22,6 +23,7 @@ class ToolRegistry:
         self.register(QueryProfileTool())
         self.register(QueryAbnormalTool())
         self.register(ExtractAndSaveTool())
+        self.register(QueryReportsTool())
 
     def register(self, tool: HealthTool) -> None:
         """Register a tool instance."""

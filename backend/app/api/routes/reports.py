@@ -41,7 +41,7 @@ EXTRACT_PROMPT = """\
 请严格按照以下JSON格式返回（不要包含markdown代码块标记）：
 {
   "patient_name": "报告中识别到的姓名，没有则为null",
-  "report_type": "报告类型，如 体检报告/血液检查/血压记录 等",
+  "report_type": "报告类型，如：检查报告单、检验报告单、血压记录、血糖记录、其他 等",
   "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
   "metrics": [
     {
@@ -505,6 +505,16 @@ async def confirm_report(
     record.saved_exam_findings = saved_exam_findings
 
     await db.flush()
+
+    # Generate embedding for RAG (non-blocking: failure won't affect archival)
+    try:
+        from app.services.rag import generate_and_store_embedding
+        await generate_and_store_embedding(
+            db, member_id, record, payload.extraction.model_dump()
+        )
+    except Exception as e:
+        logger.warning("Embedding generation failed for report %s: %s", record.id, e)
+
     await db.commit()
     return ConfirmResponse(
         saved_metrics=saved_metrics,
@@ -562,3 +572,171 @@ async def delete_report(
     await db.delete(record)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{member_id}/reports/{report_id}/retry", response_model=ReportRecordResponse)
+async def retry_extraction(
+    member_id: int,
+    report_id: int,
+    model_router: ModelRouter = Depends(get_model_router),
+    db: AsyncSession = Depends(get_db),
+) -> ReportRecordResponse:
+    """Re-run AI extraction for a rejected/failed report."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    record = r.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    if record.status not in ("rejected", "cancelled", "uploaded"):
+        raise HTTPException(status_code=400, detail=f"当前状态 {record.status} 不可重试")
+
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+    ext = ext_map.get(record.file_type, ".bin")
+    file_path = UPLOAD_DIR / f"{record.id}{ext}"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="原始文件未找到")
+    content = file_path.read_bytes()
+    b64 = base64.b64encode(content).decode("utf-8")
+    data_url = f"data:{record.file_type};base64,{b64}"
+
+    record.status = "extracting"
+    record.extraction = None
+    await db.flush()
+
+    provider = model_router.get_multimodal_provider()
+    members_result = await db.execute(
+        select(FamilyMember).where(FamilyMember.is_deleted.is_(False))
+    )
+    members = members_result.scalars().all()
+    member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
+    existing_result = await db.execute(
+        select(MetricRecord.metric_name).where(
+            MetricRecord.member_id == member_id,
+            MetricRecord.metric_name.like('lab:%') | MetricRecord.metric_name.like('exam:%'),
+        ).distinct()
+    )
+    existing_names = [r2[0] for r2 in existing_result.all()]
+    existing_lab_reports = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('lab:') and len(n.split(':')) >= 3})
+    existing_exam_cats = sorted({n.split(':', 2)[1] for n in existing_names if n.startswith('exam:') and len(n.split(':')) >= 3})
+    tabs_hint = f"\n已有检验报告标签：{existing_lab_reports}" if existing_lab_reports else "\n已有检验报告标签：无"
+    tabs_hint += f"\n已有检查分类标签：{existing_exam_cats}" if existing_exam_cats else "\n已有检查分类标签：无"
+    tabs_hint += "\n重要：report_name 和 finding_category 必须优先复用已有标签，仅当无法匹配时才新建简短标准名。"
+    prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
+    messages = [
+        Message(role="system", content=prompt),
+        Message(role="user", content=[
+            {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]),
+    ]
+
+    import asyncio
+    last_err = None
+    data = None
+    for attempt in range(3):
+        try:
+            response = await provider.chat(messages, temperature=0.1, max_tokens=4096)
+            raw = response.content.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                raw = "\n".join(lines)
+            data = json.loads(raw)
+            ext = ExtractionResult(**data)
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning("Retry extraction attempt %d failed for report %s: %s", attempt + 1, record.id, e)
+            if attempt < 2:
+                await asyncio.sleep(2)
+    else:
+        logger.error("Retry extraction failed after 3 attempts for report %s", record.id)
+        record.status = "rejected"
+        await db.flush()
+        await db.commit()
+        return _report_to_response(record)
+
+    record.extraction = json.dumps(data, ensure_ascii=False)
+    record.report_type = ext.report_type
+    record.report_date = datetime.fromisoformat(ext.report_date) if ext.report_date else None
+    record.summary = ext.summary
+    record.patient_name = ext.patient_name
+    record.status = "pending"
+    await db.flush()
+    await db.commit()
+    await db.refresh(record)
+    return _report_to_response(record)
+
+
+@router.post("/{member_id}/reports/{report_id}/cancel", response_model=ReportRecordResponse)
+async def cancel_report(
+    member_id: int,
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> ReportRecordResponse:
+    """Cancel a pending report."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    record = r.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    if record.status not in ("pending", "extracting", "uploaded"):
+        raise HTTPException(status_code=400, detail=f"当前状态 {record.status} 不可取消")
+    record.status = "cancelled"
+    await db.flush()
+    await db.commit()
+    await db.refresh(record)
+    return _report_to_response(record)
+
+
+@router.post("/{member_id}/reports/rebuild-embeddings")
+async def rebuild_embeddings(
+    member_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Rebuild embeddings for all archived reports of a member."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.member_id == member_id,
+            ReportRecord.status == "archived",
+        )
+    )
+    records = r.scalars().all()
+
+    from app.services.rag import generate_and_store_embedding
+    success = 0
+    skipped = 0
+    failed = 0
+    for record in records:
+        if not record.confirmed_extraction:
+            skipped += 1
+            continue
+        try:
+            extraction_data = json.loads(record.confirmed_extraction)
+            chunk = await generate_and_store_embedding(db, member_id, record, extraction_data)
+            if chunk:
+                success += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            logger.warning("Rebuild embedding failed for report %s: %s", record.id, e)
+            failed += 1
+
+    await db.commit()
+    return {
+        "total": len(records),
+        "success": success,
+        "skipped": skipped,
+        "failed": failed,
+    }
