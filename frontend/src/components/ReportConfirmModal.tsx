@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { reportsApi, type ExtractionResult,  } from '@/lib/api'
+import { reportsApi, type ReportRecord } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 
 const METRIC_LABELS: Record<string, string> = {
@@ -16,29 +16,47 @@ const METRIC_LABELS: Record<string, string> = {
   weight: '体重',
 }
 
-export default function ReportConfirmModal({ onClose }: { onClose: () => void }) {
+interface Props {
+  /** When provided: viewing/confirming an existing report record */
+  report?: ReportRecord
+  /** When provided without report: direct upload mode (from MetricInput) */
+  uploadSource?: string
+  onClose: () => void
+}
+
+export default function ReportConfirmModal({ report, uploadSource = 'metric_input', onClose }: Props) {
   const { currentMemberId, members } = useMemberStore()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [extraction, setExtraction] = useState<ExtractionResult | null>(null)
+
+  // If report is provided, use its extraction; otherwise upload mode
+  const [currentReport, setCurrentReport] = useState<ReportRecord | null>(report || null)
   const [error, setError] = useState<string | null>(null)
+
+  // Selection state
+  const extraction = currentReport?.extraction || null
   const [selectedMetrics, setSelectedMetrics] = useState<Set<number>>(new Set())
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<Set<number>>(new Set())
   const [selectedMedications, setSelectedMedications] = useState<Set<number>>(new Set())
   const [selectedLabTests, setSelectedLabTests] = useState<Set<number>>(new Set())
   const [selectedExamFindings, setSelectedExamFindings] = useState<Set<number>>(new Set())
 
-  const extractMutation = useMutation({
-    mutationFn: ({ memberId, f }: { memberId: number; f: File }) => reportsApi.extract(memberId, f),
+  // Initialize selections when extraction becomes available
+  useEffect(() => {
+    if (extraction) {
+      setSelectedMetrics(new Set(extraction.metrics.map((_, i) => i)))
+      setSelectedDiagnoses(new Set(extraction.diagnoses.map((_, i) => i)))
+      setSelectedMedications(new Set(extraction.medications.map((_, i) => i)))
+      setSelectedLabTests(new Set(extraction.lab_tests.map((_, i) => i)))
+      setSelectedExamFindings(new Set(extraction.exam_findings.map((_, i) => i)))
+    }
+  }, [currentReport?.id])
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ memberId, file }: { memberId: number; file: File }) =>
+      reportsApi.upload(memberId, file, uploadSource),
     onSuccess: (data) => {
-      setExtraction(data)
-      // Default: select all
-      setSelectedMetrics(new Set(data.metrics.map((_, i) => i)))
-      setSelectedDiagnoses(new Set(data.diagnoses.map((_, i) => i)))
-      setSelectedMedications(new Set(data.medications.map((_, i) => i)))
-      setSelectedLabTests(new Set(data.lab_tests.map((_, i) => i)))
-      setSelectedExamFindings(new Set(data.exam_findings.map((_, i) => i)))
+      setCurrentReport(data)
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
@@ -46,10 +64,9 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
   const confirmMutation = useMutation({
     mutationFn: (memberId: number) => {
-      if (!extraction) throw new Error('no extraction')
-      return reportsApi.confirm(memberId, {
+      if (!currentReport || !extraction) throw new Error('no extraction')
+      return reportsApi.confirm(memberId, currentReport.id, {
         extraction,
-        file_name: file?.name,
         keep_metric_indices: [...selectedMetrics],
         keep_diagnosis_indices: [...selectedDiagnoses],
         keep_medication_indices: [...selectedMedications],
@@ -61,6 +78,7 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
       queryClient.invalidateQueries({ queryKey: ['metrics'] })
       queryClient.invalidateQueries({ queryKey: ['profile'] })
       queryClient.invalidateQueries({ queryKey: ['metrics-all'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
       onClose()
     },
     onError: (err: Error) => setError(err.message),
@@ -74,9 +92,8 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
       setError('仅支持 JPG/PNG/WebP/PDF')
       return
     }
-    setFile(f)
     setError(null)
-    extractMutation.mutate({ memberId: currentMemberId, f })
+    uploadMutation.mutate({ memberId: Number(currentMemberId), file: f })
   }
 
   const toggle = (set: Set<number>, idx: number, setter: (s: Set<number>) => void) => {
@@ -86,7 +103,7 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
     setter(next)
   }
 
-  // Detect matched member
+  const isArchived = currentReport?.status === 'archived'
   const matchedMember = extraction?.patient_name
     ? members.find((m) => m.name === extraction.patient_name)
     : null
@@ -95,20 +112,23 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="max-h-[85vh] w-[600px] overflow-y-auto rounded-card bg-white p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-medium text-slate-800">报告导入</h2>
+          <h2 className="text-base font-medium text-slate-800">
+            {isArchived ? '报告详情' : currentReport ? '确认入档' : '报告导入'}
+          </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <span className="material-symbols-rounded">close</span>
           </button>
         </div>
 
-        {!extraction && (
+        {/* Upload zone (only in direct upload mode without report) */}
+        {!currentReport && (
           <>
             <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={handleFileSelect} className="hidden" />
             <div
               onClick={() => fileInputRef.current?.click()}
               className="flex cursor-pointer flex-col items-center justify-center rounded-field border-2 border-dashed border-slate-200 py-12 transition hover:border-primary hover:bg-primary-light/30"
             >
-              {extractMutation.isPending ? (
+              {uploadMutation.isPending ? (
                 <>
                   <span className="material-symbols-rounded animate-spin text-3xl text-primary">progress_activity</span>
                   <p className="mt-2 text-sm text-primary">AI 解析中...</p>
@@ -125,7 +145,8 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
           </>
         )}
 
-        {extraction && (
+        {/* Extraction results */}
+        {currentReport && extraction && (
           <div className="space-y-4">
             {/* Report meta */}
             {(extraction.report_type || extraction.report_date || extraction.summary) && (
@@ -151,18 +172,30 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
               </div>
             )}
 
+            {/* Archived stats */}
+            {isArchived && (
+              <div className="flex flex-wrap gap-2 text-xs">
+                {currentReport.saved_metrics > 0 && <span className="rounded-full bg-green-50 px-2 py-0.5 text-green-600">指标 {currentReport.saved_metrics}</span>}
+                {currentReport.saved_lab_tests > 0 && <span className="rounded-full bg-green-50 px-2 py-0.5 text-green-600">检验 {currentReport.saved_lab_tests}</span>}
+                {currentReport.saved_exam_findings > 0 && <span className="rounded-full bg-green-50 px-2 py-0.5 text-green-600">检查 {currentReport.saved_exam_findings}</span>}
+                {currentReport.saved_diagnoses > 0 && <span className="rounded-full bg-green-50 px-2 py-0.5 text-green-600">诊断 {currentReport.saved_diagnoses}</span>}
+                {currentReport.saved_medications > 0 && <span className="rounded-full bg-green-50 px-2 py-0.5 text-green-600">用药 {currentReport.saved_medications}</span>}
+              </div>
+            )}
+
             {/* Metrics */}
             {extraction.metrics.length > 0 && (
-              <Section title="指标数据" count={selectedMetrics.size} total={extraction.metrics.length}>
+              <Section title="指标数据" count={selectedMetrics.size} total={extraction.metrics.length} readonly={isArchived}>
                 {extraction.metrics.map((m, i) => (
                   <CheckRow
                     key={i}
                     checked={selectedMetrics.has(i)}
-                    onToggle={() => toggle(selectedMetrics, i, setSelectedMetrics)}
+                    onToggle={() => !isArchived && toggle(selectedMetrics, i, setSelectedMetrics)}
                     label={METRIC_LABELS[m.metric_name] || m.label}
                     value={`${m.value} ${m.unit || ''}`}
                     badge={m.is_abnormal ? { text: '异常', color: 'amber' } : undefined}
                     sub={m.reference_lower != null && m.reference_upper != null ? `参考: ${m.reference_lower}-${m.reference_upper}` : undefined}
+                    readonly={isArchived}
                   />
                 ))}
               </Section>
@@ -170,15 +203,16 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
             {/* Diagnoses */}
             {extraction.diagnoses.length > 0 && (
-              <Section title="诊断记录" count={selectedDiagnoses.size} total={extraction.diagnoses.length}>
+              <Section title="诊断记录" count={selectedDiagnoses.size} total={extraction.diagnoses.length} readonly={isArchived}>
                 {extraction.diagnoses.map((d, i) => (
                   <CheckRow
                     key={i}
                     checked={selectedDiagnoses.has(i)}
-                    onToggle={() => toggle(selectedDiagnoses, i, setSelectedDiagnoses)}
+                    onToggle={() => !isArchived && toggle(selectedDiagnoses, i, setSelectedDiagnoses)}
                     label={d.disease_name}
                     badge={d.severity ? { text: d.severity, color: 'slate' } : undefined}
                     sub={d.diagnosed_date || undefined}
+                    readonly={isArchived}
                   />
                 ))}
               </Section>
@@ -186,14 +220,15 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
             {/* Medications */}
             {extraction.medications.length > 0 && (
-              <Section title="用药记录" count={selectedMedications.size} total={extraction.medications.length}>
+              <Section title="用药记录" count={selectedMedications.size} total={extraction.medications.length} readonly={isArchived}>
                 {extraction.medications.map((m, i) => (
                   <CheckRow
                     key={i}
                     checked={selectedMedications.has(i)}
-                    onToggle={() => toggle(selectedMedications, i, setSelectedMedications)}
+                    onToggle={() => !isArchived && toggle(selectedMedications, i, setSelectedMedications)}
                     label={m.drug_name}
                     value={`${m.dosage} · ${m.frequency}`}
+                    readonly={isArchived}
                   />
                 ))}
               </Section>
@@ -201,16 +236,17 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
             {/* Lab tests */}
             {extraction.lab_tests.length > 0 && (
-              <Section title="检验指标" count={selectedLabTests.size} total={extraction.lab_tests.length}>
+              <Section title="检验指标" count={selectedLabTests.size} total={extraction.lab_tests.length} readonly={isArchived}>
                 {extraction.lab_tests.map((m, i) => (
                   <CheckRow
                     key={i}
                     checked={selectedLabTests.has(i)}
-                    onToggle={() => toggle(selectedLabTests, i, setSelectedLabTests)}
+                    onToggle={() => !isArchived && toggle(selectedLabTests, i, setSelectedLabTests)}
                     label={m.test_name}
                     value={`${m.value} ${m.unit || ''}`}
                     sub={m.report_name}
                     badge={m.is_abnormal ? { text: '异常', color: 'amber' } : undefined}
+                    readonly={isArchived}
                   />
                 ))}
               </Section>
@@ -218,16 +254,17 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
             {/* Exam findings */}
             {extraction.exam_findings.length > 0 && (
-              <Section title="检查指标" count={selectedExamFindings.size} total={extraction.exam_findings.length}>
+              <Section title="检查指标" count={selectedExamFindings.size} total={extraction.exam_findings.length} readonly={isArchived}>
                 {extraction.exam_findings.map((m, i) => (
                   <CheckRow
                     key={i}
                     checked={selectedExamFindings.has(i)}
-                    onToggle={() => toggle(selectedExamFindings, i, setSelectedExamFindings)}
+                    onToggle={() => !isArchived && toggle(selectedExamFindings, i, setSelectedExamFindings)}
                     label={m.finding_desc}
                     value={m.value_num != null ? `${m.value_num} ${m.unit || ''}` : undefined}
                     sub={m.conclusion || undefined}
                     badge={{ text: m.finding_category, color: 'amber' }}
+                    readonly={isArchived}
                   />
                 ))}
               </Section>
@@ -239,21 +276,26 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
 
             {error && <p className="text-sm text-red-500">{error}</p>}
 
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => { setExtraction(null); setFile(null) }}
-                className="flex-1 rounded-field border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50"
-              >
-                重新上传
-              </button>
-              <button
-                onClick={() => currentMemberId && confirmMutation.mutate(currentMemberId)}
-                disabled={confirmMutation.isPending || (selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size === 0)}
-                className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
-              >
-                {confirmMutation.isPending ? '保存中...' : `确认入档 (${selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size})`}
-              </button>
-            </div>
+            {/* Actions */}
+            {!isArchived && (
+              <div className="flex gap-3 pt-2">
+                {!report && (
+                  <button
+                    onClick={() => { setCurrentReport(null); }}
+                    className="flex-1 rounded-field border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                  >
+                    重新上传
+                  </button>
+                )}
+                <button
+                  onClick={() => currentMemberId && confirmMutation.mutate(Number(currentMemberId))}
+                  disabled={confirmMutation.isPending || (selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size === 0)}
+                  className="flex-1 rounded-field bg-primary py-2 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
+                >
+                  {confirmMutation.isPending ? '保存中...' : `确认入档 (${selectedMetrics.size + selectedDiagnoses.size + selectedMedications.size + selectedLabTests.size + selectedExamFindings.size})`}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -261,34 +303,37 @@ export default function ReportConfirmModal({ onClose }: { onClose: () => void })
   )
 }
 
-function Section({ title, count, total, children }: { title: string; count: number; total: number; children: React.ReactNode }) {
+function Section({ title, count, total, readonly, children }: { title: string; count: number; total: number; readonly?: boolean; children: React.ReactNode }) {
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-sm font-medium text-slate-700">{title}</h3>
-        <span className="text-xs text-slate-400">({count}/{total} 已选)</span>
+        {!readonly && <span className="text-xs text-slate-400">({count}/{total} 已选)</span>}
       </div>
       <div className="space-y-1.5">{children}</div>
     </div>
   )
 }
 
-function CheckRow({ checked, onToggle, label, value, badge, sub }: {
+function CheckRow({ checked, onToggle, label, value, badge, sub, readonly }: {
   checked: boolean
   onToggle: () => void
   label: string
   value?: string
   badge?: { text: string; color: 'amber' | 'slate' }
   sub?: string
+  readonly?: boolean
 }) {
   return (
     <div
-      onClick={onToggle}
-      className={`flex cursor-pointer items-center gap-3 rounded-field border px-3 py-2 transition ${checked ? 'border-primary bg-primary-light/30' : 'border-slate-100 bg-slate-50'}`}
+      onClick={readonly ? undefined : onToggle}
+      className={`flex items-center gap-3 rounded-field border px-3 py-2 transition ${readonly ? 'cursor-default border-slate-100 bg-slate-50' : 'cursor-pointer'} ${checked && !readonly ? 'border-primary bg-primary-light/30' : 'border-slate-100 bg-slate-50'}`}
     >
-      <span className={`material-symbols-rounded text-lg ${checked ? 'text-primary' : 'text-slate-300'}`}>
-        {checked ? 'check_box' : 'check_box_outline_blank'}
-      </span>
+      {!readonly && (
+        <span className={`material-symbols-rounded text-lg ${checked ? 'text-primary' : 'text-slate-300'}`}>
+          {checked ? 'check_box' : 'check_box_outline_blank'}
+        </span>
+      )}
       <div className="flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-slate-700">{label}</span>

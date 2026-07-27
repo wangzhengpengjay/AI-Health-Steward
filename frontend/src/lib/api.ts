@@ -187,10 +187,37 @@ export interface AllergyItem {
   recorded_at?: string
 }
 
+export interface LifestyleItem {
+  id: number
+  category: string
+  status: string
+  frequency?: string
+  recorded_at?: string
+}
+
+export interface SurgeryItem {
+  id: number
+  surgery_name: string
+  surgery_date?: string
+  hospital?: string
+  notes?: string
+}
+
+export interface VaccinationItem {
+  id: number
+  vaccine_name: string
+  dose_no?: string
+  vaccinated_date?: string
+  facility?: string
+}
+
 export interface ProfileSummary {
   diagnoses: DiagnosisItem[]
   medications: MedicationItem[]
   allergies: AllergyItem[]
+  lifestyles: LifestyleItem[]
+  surgeries: SurgeryItem[]
+  vaccinations: VaccinationItem[]
 }
 
 export const profileApi = {
@@ -205,6 +232,15 @@ export const profileApi = {
 
   addAllergy: (memberId: number, data: { type: string; name: string; severity?: string }) =>
     request<AllergyItem>(`/members/${memberId}/profile/allergies`, { method: 'POST', body: JSON.stringify(data) }),
+
+  addLifestyle: (memberId: number, data: { category: string; status: string; frequency?: string; recorded_at?: string }) =>
+    request<LifestyleItem>(`/members/${memberId}/profile/lifestyles`, { method: 'POST', body: JSON.stringify(data) }),
+
+  addSurgery: (memberId: number, data: { surgery_name: string; surgery_date?: string; hospital?: string; notes?: string }) =>
+    request<SurgeryItem>(`/members/${memberId}/profile/surgeries`, { method: 'POST', body: JSON.stringify(data) }),
+
+  addVaccination: (memberId: number, data: { vaccine_name: string; dose_no?: string; vaccinated_date?: string; facility?: string }) =>
+    request<VaccinationItem>(`/members/${memberId}/profile/vaccinations`, { method: 'POST', body: JSON.stringify(data) }),
 
   deleteRecord: (recordType: string, recordId: number) =>
     request<void>(`/members/profile/records/${recordType}/${recordId}`, { method: 'DELETE' }),
@@ -264,11 +300,40 @@ export interface ExtractionResult {
   summary?: string
 }
 
+export interface ReportRecord {
+  id: number
+  member_id: number
+  file_name: string
+  file_type: string
+  file_size: number
+  source: string
+  status: string  // uploaded / extracting / pending / archived / rejected / cancelled
+  extraction?: ExtractionResult | null
+  report_type?: string | null
+  report_date?: string | null
+  summary?: string | null
+  patient_name?: string | null
+  saved_metrics: number
+  saved_diagnoses: number
+  saved_medications: number
+  saved_lab_tests: number
+  saved_exam_findings: number
+  created_at: string
+  updated_at: string
+}
+
 export const reportsApi = {
-  extract: async (memberId: number, file: File): Promise<ExtractionResult> => {
+  list: (memberId: number) =>
+    request<ReportRecord[]>(`/members/${memberId}/reports`),
+
+  get: (memberId: number, reportId: number) =>
+    request<ReportRecord>(`/members/${memberId}/reports/${reportId}`),
+
+  upload: async (memberId: number, file: File, source: string = 'report_page'): Promise<ReportRecord> => {
     const formData = new FormData()
     formData.append('file', file)
-    const res = await fetch(`${BASE_URL}/members/${memberId}/reports/extract`, {
+    const params = new URLSearchParams({ source })
+    const res = await fetch(`${BASE_URL}/members/${memberId}/reports/upload?${params}`, {
       method: 'POST',
       body: formData,
     })
@@ -279,9 +344,8 @@ export const reportsApi = {
     return res.json()
   },
 
-  confirm: (memberId: number, data: {
+  confirm: (memberId: number, reportId: number, data: {
     extraction: ExtractionResult
-    file_name?: string
     keep_metric_indices?: number[]
     keep_diagnosis_indices?: number[]
     keep_medication_indices?: number[]
@@ -289,9 +353,12 @@ export const reportsApi = {
     keep_exam_finding_indices?: number[]
   }) =>
     request<{ saved_metrics: number; saved_diagnoses: number; saved_medications: number; saved_lab_tests: number; saved_exam_findings: number }>(
-      `/members/${memberId}/reports/confirm`,
+      `/members/${memberId}/reports/${reportId}/confirm`,
       { method: 'POST', body: JSON.stringify(data) },
     ),
+
+  delete: (memberId: number, reportId: number) =>
+    request<{ ok: boolean }>(`/members/${memberId}/reports/${reportId}`, { method: 'DELETE' }),
 }
 
 // ---- Checkup Recommendation ----
@@ -342,9 +409,12 @@ export const checkupApi = {
       body: JSON.stringify(data),
     }),
 
-  recommend: (memberId: number, budgetTier: string) =>
-    request<RecommendResponse>(`/members/${memberId}/checkup-recommend`, {
-      method: 'POST',
-      body: JSON.stringify({ budget_tier: budgetTier }),
-    }),
+ recommend: (memberId: number, budgetTier: string) =>
+   request<RecommendResponse>(`/members/${memberId}/checkup-recommend`, {
+     method: 'POST',
+     body: JSON.stringify({ budget_tier: budgetTier }),
+   }),
+ 
+ getLatest: (memberId: number) =>
+   request<RecommendResponse | null>(`/members/${memberId}/checkup-latest`),
 }

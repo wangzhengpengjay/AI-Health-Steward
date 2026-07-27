@@ -1,10 +1,12 @@
 """AI consultation service — orchestrates model provider + tool calling.
 
-The service builds a system prompt with role/knowledge-boundary constraints,
-sends the conversation to the text model with tool definitions, executes any
-tool calls the model returns, feeds the results back, and produces the final
-reply. Both non-streaming (chat) and streaming (chat_stream) entry points are
-provided.
+When an image/PDF is attached:
+1. Extract structured data via multimodal model
+2. Inject extracted data into system prompt
+3. Chat with text model (supports tool calling)
+
+This avoids vision + tool_calling compatibility issues and gives the text
+model structured context for more accurate answers.
 """
 from __future__ import annotations
 
@@ -44,7 +46,69 @@ SYSTEM_PROMPT = """\
 回答时始终基于用户画像中的实际数据，不要编造数据。如果数据不足，引导用户上传报告或手动录入。
 """
 
-# Keywords that hint at higher-risk conversations for risk-level tagging.
+EXTRACT_PROMPT = """\
+你是一个医疗报告解析助手。请仔细分析上传的健康报告图片/PDF，提取以下结构化信息。
+
+要求：
+1. 只提取报告中明确出现的数据，不要编造或推断
+2. 如果某个字段无法识别，返回null或空数组
+3. 检查指标（exam_findings）只提取异常发现，不提取正常检查结果
+4. 如果报告中有姓名，尝试识别归属人
+
+请严格按照以下JSON格式返回（不要包含markdown代码块标记）：
+{
+  "patient_name": "报告中识别到的姓名，没有则为null",
+  "report_type": "报告类型，如 体检报告/血液检查/血压记录 等",
+  "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
+  "metrics": [
+    {
+      "metric_name": "指标标识符，使用以下标准名称之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, total_cholesterol, triglycerides, ldl_cholesterol, hdl_cholesterol, heart_rate, weight",
+      "label": "报告中显示的指标中文名",
+      "value": 数值,
+      "unit": "单位",
+      "reference_lower": 参考下限数值或null,
+      "reference_upper": 参考上限数值或null,
+      "is_abnormal": true或false
+    }
+  ],
+  "diagnoses": [
+    {
+      "disease_name": "诊断名称",
+      "severity": "严重程度或null",
+      "diagnosed_date": "日期或null"
+    }
+  ],
+  "medications": [
+    {
+      "drug_name": "药品名称",
+      "dosage": "剂量",
+      "frequency": "用药频次"
+    }
+  ],
+  "lab_tests": [
+    {
+      "report_name": "检验报告名称，如 血常规/肝功能/肾功能",
+      "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
+      "value": 数值,
+      "unit": "单位",
+      "reference_lower": 参考下限或null,
+      "reference_upper": 参考上限或null,
+      "is_abnormal": true或false
+    }
+  ],
+  "exam_findings": [
+    {
+      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等",
+      "finding_desc": "具体诊断描述，如 右肺水平裂旁微小磨玻璃结节",
+      "value_num": 可量化的数值或null",
+      "unit": "数值的单位或null",
+      "conclusion": "检查结论或建议"
+    }
+  ],
+  "summary": "报告摘要，1-3句话概述"
+}
+"""
+
 _S_LEVEL_KEYWORDS = ["停药", "处方", "诊断", "开药"]
 _A_LEVEL_KEYWORDS = ["用药", "药物", "相互作用", "副作用", "胸痛", "呼吸困难", "急症"]
 
@@ -69,21 +133,22 @@ class ConsultationService:
         conversation_history: list[Message] | None = None,
         image_data_url: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str]:
-        """Run a full (non-streaming) consultation turn.
-
-        Returns:
-            A tuple of (reply_text, tool_call_records, risk_level).
-        """
         has_vision = image_data_url is not None
+        system_prompt = SYSTEM_PROMPT
+
         if has_vision:
-            provider = self.router.get_multimodal_provider()
+            # Step 1: extract structured data from image via multimodal
+            extracted_text = await self._extract_from_image(image_data_url)
+            system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
+            provider = self.router.get_text_provider()
         else:
             provider = self.router.get_text_provider()
-        messages = self._build_messages(user_message, conversation_history, image_data_url)
+
         tool_defs = self.tools.get_all_tool_definitions()
+        messages = self._build_messages(user_message, system_prompt, conversation_history)
 
         tool_call_records: list[dict[str, Any]] = []
-        max_rounds = 5  # safety limit on tool-calling loops
+        max_rounds = 5
 
         for _ in range(max_rounds):
             response: ModelResponse = await provider.chat(
@@ -95,40 +160,17 @@ class ConsultationService:
                 risk_level = self._assess_risk(user_message, reply)
                 return reply, tool_call_records, risk_level
 
-            # The model wants to call tools — append the assistant message and
-            # execute each requested call.
-            # Build tool_calls in OpenAI format for the assistant message
             tool_calls_oi = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.arguments},
-                }
+                {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
                 for tc in response.tool_calls
             ]
-            messages.append(
-                Message(
-                    role="assistant",
-                    content=response.content or "",
-                    tool_calls=tool_calls_oi,
-                )
-            )
+            messages.append(Message(role="assistant", content=response.content or "", tool_calls=tool_calls_oi))
 
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc, member_id)
-                tool_call_records.append(
-                    {"name": tc.name, "arguments": tc.arguments, "result": result}
-                )
-                messages.append(
-                    Message(
-                        role="tool",
-                        content=json.dumps(result, ensure_ascii=False, default=str),
-                        name=tc.name,
-                        tool_call_id=tc.id,
-                    )
-                )
+                tool_call_records.append({"name": tc.name, "arguments": tc.arguments, "result": result})
+                messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
 
-        # Exhausted the loop — ask the model for a final summary without tools.
         response = await provider.chat(messages, tools=None)
         reply = response.content or ""
         risk_level = self._assess_risk(user_message, reply)
@@ -141,18 +183,20 @@ class ConsultationService:
         conversation_history: list[Message] | None = None,
         image_data_url: str | None = None,
     ) -> AsyncIterator[str]:
-        """Stream the final reply as content deltas (for SSE).
-
-        Tool-calling rounds are performed non-streaming; only the final
-        response is streamed to the client.
-        """
         has_vision = image_data_url is not None
+        system_prompt = SYSTEM_PROMPT
+
         if has_vision:
-            provider = self.router.get_multimodal_provider()
+            extracted_text = await self._extract_from_image(image_data_url)
+            logger.info("Image extraction done, length=%d, starting text chat stream", len(extracted_text))
+            system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
+            provider = self.router.get_text_provider()
         else:
             provider = self.router.get_text_provider()
-        messages = self._build_messages(user_message, conversation_history, image_data_url)
+
         tool_defs = self.tools.get_all_tool_definitions()
+        messages = self._build_messages(user_message, system_prompt, conversation_history)
+        logger.info("chat_stream: has_vision=%s, tool_defs=%d, messages=%d", has_vision, len(tool_defs or []), len(messages))
 
         max_rounds = 5
 
@@ -160,85 +204,82 @@ class ConsultationService:
             response: ModelResponse = await provider.chat(
                 messages, tools=tool_defs if tool_defs else None
             )
+            logger.info("chat_stream: response tool_calls=%s, content_len=%d", bool(response.tool_calls), len(response.content or ""))
 
             if not response.tool_calls:
-                # Final answer — re-request in stream mode so we can yield deltas.
-                async for delta in await provider.chat(  # type: ignore[assignment]
-                    messages, tools=None, stream=True
-                ):
+                logger.info("chat_stream: starting stream output")
+                async for delta in await provider.chat(messages, tools=None, stream=True):
                     yield delta
+                logger.info("chat_stream: stream output done")
                 return
 
-            # Build tool_calls in OpenAI format for the assistant message
             tool_calls_oi = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.arguments},
-                }
+                {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
                 for tc in response.tool_calls
             ]
-            messages.append(
-                Message(
-                    role="assistant",
-                    content=response.content or "",
-                    tool_calls=tool_calls_oi,
-                )
-            )
+            messages.append(Message(role="assistant", content=response.content or "", tool_calls=tool_calls_oi))
 
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc, member_id)
-                messages.append(
-                    Message(
-                        role="tool",
-                        content=json.dumps(result, ensure_ascii=False, default=str),
-                        name=tc.name,
-                        tool_call_id=tc.id,
-                    )
-                )
+                messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
 
-        # Fallback: stream whatever the model produces without tools.
-        async for delta in await provider.chat(messages, tools=None, stream=True):  # type: ignore[assignment]
+        async for delta in await provider.chat(messages, tools=None, stream=True):
             yield delta
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    async def _extract_from_image(self, image_data_url: str) -> str:
+        """Use multimodal model to extract structured data from report image."""
+        multimodal = self.router.get_multimodal_provider()
+        messages = [
+            Message(role="system", content=EXTRACT_PROMPT),
+            Message(role="user", content=[
+                {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]),
+        ]
+        import asyncio
+        last_err = None
+        for attempt in range(3):
+            try:
+                response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
+                raw = response.content.strip()
+                if raw.startswith("```"):
+                    lines = raw.split("\n")
+                    lines = [l for l in lines if not l.strip().startswith("```")]
+                    raw = "\n".join(lines)
+                data = json.loads(raw)
+                return json.dumps(data, ensure_ascii=False, indent=2)
+            except Exception as e:
+                last_err = e
+                logger.warning("Image extraction attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    await asyncio.sleep(2)
+        logger.error("Image extraction failed after 3 attempts")
+        return f"[报告解析失败: {last_err}] 请用户描述报告内容。"
+
     def _build_messages(
         self,
         user_message: str,
+        system_prompt: str,
         history: list[Message] | None,
-        image_data_url: str | None = None,
     ) -> list[Message]:
-        messages: list[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
+        messages: list[Message] = [Message(role="system", content=system_prompt)]
         if history:
             messages.extend(history)
-
-        if image_data_url:
-            # Multimodal message: text + image
-            content = [
-                {"type": "text", "text": user_message},
-                {"type": "image_url", "image_url": {"url": image_data_url}},
-            ]
-            messages.append(Message(role="user", content=content))
-        else:
-            messages.append(Message(role="user", content=user_message))
+        messages.append(Message(role="user", content=user_message))
         return messages
 
-    async def _execute_tool_call(
-        self, tc: ToolCall, member_id: int
-    ) -> dict[str, Any]:
-        """Execute a single ToolCall and return its result dict."""
+    async def _execute_tool_call(self, tc: ToolCall, member_id: int) -> dict[str, Any]:
         tool = self.tools.get_tool(tc.name)
         if tool is None:
             return {"error": f"未知工具: {tc.name}"}
-
         try:
             arguments = json.loads(tc.arguments) if tc.arguments else {}
         except json.JSONDecodeError:
             return {"error": f"工具参数解析失败: {tc.arguments}"}
-
         try:
             result = await tool.execute(self.db, member_id, **arguments)
             await self.db.flush()
@@ -249,7 +290,6 @@ class ConsultationService:
 
     @staticmethod
     def _assess_risk(user_message: str, reply: str) -> str:
-        """Heuristic risk-level assessment for response tagging."""
         combined = (user_message + reply).lower()
         if any(kw in combined for kw in _S_LEVEL_KEYWORDS):
             return "S"

@@ -18,6 +18,9 @@
 - **Multi-Channel** — WebUI as the primary interface; Feishu bot for data collection and lightweight Q&A (V0.4)
 - **Pluggable Models** — Multimodal API (required) / Text API (optional) / Local LLM (optional), configured on demand
 - **Family Multi-Member** — Single instance serves one family with isolated member data
+- **Report Management** — Full report lifecycle (upload → AI extraction → confirm → archive), with three upload entry points: report page, metric page, and AI chat
+- **Lab & Exam Tracking** — Lab metrics grouped by report with per-test trend charts; exam findings displayed on a category timeline
+- **AI Image Interpretation** — Send report images in chat; AI extracts structured data first, then provides professional interpretation based on the extracted data, with one-click archiving
 
 ## Quick Start
 
@@ -91,6 +94,7 @@ AI-Health-Steward/
 | V0.1 | Project scaffold & data foundation | ✅ Done |
 | V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
 | V0.3 | Report import & visualization — multimodal extraction, trends, dashboard | 🔧 In Progress |
+| V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations | 🔧 In Progress |
 | V0.4 | Feishu channel — data collection, lightweight Q&A | Planned |
 | V1.0 | Open-source release — docs, one-click deploy | Planned |
 

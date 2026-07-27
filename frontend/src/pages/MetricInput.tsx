@@ -645,13 +645,13 @@ export default function MetricInput() {
         />
       )}
 
-      {/* Upload modal */}
-      {showReportModal && (
-        <ReportConfirmModal
-          onClose={() => setShowReportModal(false)}
-          
-        />
-      )}
+     {/* Upload modal */}
+     {showReportModal && (
+       <ReportConfirmModal
+         onClose={() => setShowReportModal(false)}
+         
+       />
+     )}
     </div>
   )
 }

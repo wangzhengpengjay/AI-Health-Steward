@@ -159,6 +159,42 @@ class FamilyHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+class Surgery(Base):
+    """Surgical history records."""
+
+    __tablename__ = "surgeries"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    surgery_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    surgery_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    hospital: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Vaccination(Base):
+    """Vaccination history records."""
+
+    __tablename__ = "vaccinations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    vaccine_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    dose_no: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # 1st/2nd/booster
+    vaccinated_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    facility: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class DataProvenance(Base):
@@ -176,4 +212,69 @@ class DataProvenance(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CheckupReport(Base):
+    """Persisted AI checkup recommendation reports."""
+
+    __tablename__ = "checkup_reports"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    budget_tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    completeness_score: Mapped[int] = mapped_column(nullable=False)
+    completeness_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    missing_fields: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ReportRecord(Base):
+    """Report file entity with state machine: uploaded→extracting→pending→archived/rejected/cancelled."""
+
+    __tablename__ = "report_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    file_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(32), nullable=False)  # image/jpeg, image/png, image/webp, application/pdf
+    file_size: Mapped[int] = mapped_column(nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="report_page", nullable=False)  # report_page / metric_input / chat
+    status: Mapped[str] = mapped_column(String(16), default="uploaded", nullable=False)
+    # uploaded → extracting → pending(待确认) → archived(已入档) / rejected / cancelled
+
+    # AI extraction result (JSON)
+    extraction: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # human-confirmed extraction (JSON, after user edit)
+    confirmed_extraction: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # report metadata from AI
+    report_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    report_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    patient_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # confirmation stats
+    saved_metrics: Mapped[int] = mapped_column(default=0, nullable=False)
+    saved_diagnoses: Mapped[int] = mapped_column(default=0, nullable=False)
+    saved_medications: Mapped[int] = mapped_column(default=0, nullable=False)
+    saved_lab_tests: Mapped[int] = mapped_column(default=0, nullable=False)
+    saved_exam_findings: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMemberStore } from '@/stores/memberStore'
-import { chatApi } from '@/lib/api'
+import { chatApi, reportsApi, type ReportRecord } from '@/lib/api'
 import type { ChatMessage } from '@/types'
 import ChatBubble from '@/components/ChatBubble'
+import ReportConfirmModal from '@/components/ReportConfirmModal'
 
 export default function Chat() {
   const { currentMemberId, members } = useMemberStore()
@@ -13,6 +14,9 @@ export default function Chat() {
   const [error, setError] = useState<string | null>(null)
   const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [pendingReport, setPendingReport] = useState<ReportRecord | null>(null)
+  const [extractingReport, setExtractingReport] = useState(false)
+  const [showReportModal, setShowReportModal] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -126,11 +130,23 @@ export default function Chat() {
         timestamp: new Date().toISOString(),
       }
       setMessages((prev) => [...prev, aiMsg])
-    } finally {
-      setIsStreaming(false)
-      setStreamingContent('')
+  } finally {
+    setIsStreaming(false)
+    setStreamingContent('')
+    // If a file was sent, trigger report extraction in background
+    if (fileToSend) {
+      setExtractingReport(true)
+      try {
+        const report = await reportsApi.upload(Number(currentMemberId), fileToSend, 'chat')
+        setPendingReport(report)
+      } catch (err) {
+        console.error('Report extraction failed:', err)
+      } finally {
+        setExtractingReport(false)
+      }
     }
   }
+}
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -177,17 +193,17 @@ export default function Chat() {
                 <p>"血糖 6.5 正常吗？"</p>
                 <p>"我哪些指标不正常？"</p>
                 <p>"我今天测了血压 130/85"</p>
-                <p className="text-primary">也支持上传报告图片/PDF，AI 直接解读</p>
-              </div>
-            </div>
+            <p className="text-primary">也支持上传报告图片/PDF，AI 直接解读</p>
+   </div>
           </div>
-        )}
+</div>
+   )}
 
-        {messages.map((msg, i) => (
-          <ChatBubble key={i} message={msg} />
-        ))}
+    {messages.map((msg, i) => (
+         <ChatBubble key={i} message={msg} />
+       ))}
 
-        {isStreaming && (
+       {isStreaming && (
           <ChatBubble
             message={{
               role: 'assistant',
@@ -225,9 +241,39 @@ export default function Chat() {
         </div>
       )}
 
-      {/* Input */}
-      <div className="border-t border-slate-200 bg-white px-6 py-4">
-        <div className="flex items-end gap-3">
+     {/* Input */}
+     <div className="border-t border-slate-200 bg-white px-6 py-4">
+        {/* Report extraction card */}
+        {extractingReport && (
+          <div className="mb-3 flex items-center gap-2 rounded-field border border-blue-200 bg-blue-50 px-4 py-2">
+            <span className="material-symbols-rounded animate-spin text-blue-500">progress_activity</span>
+            <span className="text-sm text-blue-600">正在提取报告结构化数据...</span>
+          </div>
+        )}
+        {pendingReport && (
+          <div className="mb-3 flex items-center gap-3 rounded-field border border-green-200 bg-green-50 px-4 py-2.5">
+            <span className="material-symbols-rounded text-green-600">check_circle</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-slate-700">报告已解析完成</p>
+              <p className="text-xs text-slate-500">
+                {pendingReport.report_type || '健康报告'} · {pendingReport.extraction?.metrics.length || 0} 项指标 · {pendingReport.extraction?.lab_tests.length || 0} 项检验 · {pendingReport.extraction?.exam_findings.length || 0} 项检查
+              </p>
+            </div>
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="rounded-field bg-primary px-3 py-1.5 text-xs text-white hover:bg-primary-hover"
+            >
+              确认入档
+            </button>
+            <button
+              onClick={() => setPendingReport(null)}
+              className="rounded-field p-1 text-slate-400 hover:text-slate-600"
+            >
+              <span className="material-symbols-rounded text-base">close</span>
+            </button>
+          </div>
+        )}
+       <div className="flex items-end gap-3">
           <input
             ref={fileInputRef}
             type="file"
@@ -263,6 +309,15 @@ export default function Chat() {
           </button>
         </div>
       </div>
+
+     {/* Report confirm modal */}
+     {showReportModal && pendingReport && (
+       <ReportConfirmModal
+         report={pendingReport}
+         uploadSource="chat"
+         onClose={() => { setShowReportModal(false); setPendingReport(null) }}
+       />
+     )}
     </div>
   )
 }

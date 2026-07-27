@@ -1,4 +1,4 @@
-"""Report ingestion: structured extraction with user confirmation."""
+"""Report management: upload → extract → confirm with state machine."""
 from __future__ import annotations
 
 import base64
@@ -7,14 +7,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.family import FamilyMember
-from app.models.health import MetricRecord, Diagnosis, Medication
+from app.models.health import MetricRecord, Diagnosis, Medication, ReportRecord
 from app.providers.base import Message
 from app.providers.router import ModelRouter, get_model_router
 
@@ -30,7 +30,8 @@ EXTRACT_PROMPT = """\
 要求：
 1. 只提取报告中明确出现的数据，不要编造或推断
 2. 如果某个字段无法识别，返回null或空数组
-3. 如果报告中有姓名，尝试识别归属人
+3. 检查指标（exam_findings）只提取异常发现，不提取正常检查结果
+4. 如果报告中有姓名，尝试识别归属人
 
 请严格按照以下JSON格式返回（不要包含markdown代码块标记）：
 {
@@ -137,8 +138,6 @@ class ExtractionResult(BaseModel):
 
 class ConfirmRequest(BaseModel):
     extraction: ExtractionResult
-    file_name: Optional[str] = None
-    # Items the user confirmed (indices to keep); empty = keep all
     keep_metric_indices: Optional[List[int]] = None
     keep_diagnosis_indices: Optional[List[int]] = None
     keep_medication_indices: Optional[List[int]] = None
@@ -152,6 +151,27 @@ class ConfirmResponse(BaseModel):
     saved_lab_tests: int
     saved_exam_findings: int
 
+class ReportRecordResponse(BaseModel):
+    id: int
+    member_id: int
+    file_name: str
+    file_type: str
+    file_size: int
+    source: str
+    status: str
+    extraction: Optional[ExtractionResult] = None
+    report_type: Optional[str] = None
+    report_date: Optional[str] = None
+    summary: Optional[str] = None
+    patient_name: Optional[str] = None
+    saved_metrics: int = 0
+    saved_diagnoses: int = 0
+    saved_medications: int = 0
+    saved_lab_tests: int = 0
+    saved_exam_findings: int = 0
+    created_at: str
+    updated_at: str
+
 
 async def _ensure_member(db: AsyncSession, member_id: int) -> None:
     r = await db.execute(
@@ -161,7 +181,7 @@ async def _ensure_member(db: AsyncSession, member_id: int) -> None:
         raise HTTPException(status_code=404, detail=f"FamilyMember {member_id} not found")
 
 
-def _file_to_data_url(file: UploadFile) -> str:
+def _file_to_data_url(file: UploadFile) -> tuple[str, str, int]:
     content = file.file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="文件过大，请上传 20MB 以内的文件")
@@ -169,28 +189,87 @@ def _file_to_data_url(file: UploadFile) -> str:
     if mime not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail=f"不支持的文件类型: {mime}，仅支持 JPG/PNG/WebP/PDF")
     b64 = base64.b64encode(content).decode("utf-8")
-    return f"data:{mime};base64,{b64}"
+    return f"data:{mime};base64,{b64}", mime, len(content)
 
 
-@router.post("/{member_id}/reports/extract", response_model=ExtractionResult)
-async def extract_report(
+def _report_to_response(r: ReportRecord) -> ReportRecordResponse:
+    extraction = None
+    if r.extraction:
+        try:
+            extraction = ExtractionResult(**json.loads(r.extraction))
+        except Exception:
+            extraction = None
+    return ReportRecordResponse(
+        id=r.id,
+        member_id=r.member_id,
+        file_name=r.file_name,
+        file_type=r.file_type,
+        file_size=r.file_size,
+        source=r.source,
+        status=r.status,
+        extraction=extraction,
+        report_type=r.report_type,
+        report_date=r.report_date.isoformat() if r.report_date else None,
+        summary=r.summary,
+        patient_name=r.patient_name,
+        saved_metrics=r.saved_metrics,
+        saved_diagnoses=r.saved_diagnoses,
+        saved_medications=r.saved_medications,
+        saved_lab_tests=r.saved_lab_tests,
+        saved_exam_findings=r.saved_exam_findings,
+        created_at=r.created_at.isoformat() if r.created_at else "",
+        updated_at=r.updated_at.isoformat() if r.updated_at else "",
+    )
+
+
+# ---- Endpoints ----
+
+@router.get("/{member_id}/reports", response_model=list[ReportRecordResponse])
+async def list_reports(
     member_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> list[ReportRecordResponse]:
+    """List all report records for a member, newest first."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord)
+        .where(ReportRecord.member_id == member_id)
+        .order_by(ReportRecord.created_at.desc())
+    )
+    return [_report_to_response(row) for row in r.scalars().all()]
+
+
+@router.post("/{member_id}/reports/upload", response_model=ReportRecordResponse)
+async def upload_report(
+    member_id: int,
+    source: str = "report_page",
     file: UploadFile = File(...),
     model_router: ModelRouter = Depends(get_model_router),
     db: AsyncSession = Depends(get_db),
-) -> ExtractionResult:
-    """Upload a report file and get structured extraction via multimodal AI."""
+) -> ReportRecordResponse:
+    """Upload a report file, create record, run AI extraction, return result."""
     await _ensure_member(db, member_id)
-    provider = model_router.get_multimodal_provider()
-    data_url = _file_to_data_url(file)
+    data_url, mime, size = _file_to_data_url(file)
 
-    # Get member names for name matching
-    result = await db.execute(
+    # Create report record
+    record = ReportRecord(
+        member_id=member_id,
+        file_name=file.filename or "unknown",
+        file_type=mime,
+        file_size=size,
+        source=source,
+        status="extracting",
+    )
+    db.add(record)
+    await db.flush()
+
+    # Run extraction
+    provider = model_router.get_multimodal_provider()
+    members_result = await db.execute(
         select(FamilyMember).where(FamilyMember.is_deleted.is_(False))
     )
-    members = result.scalars().all()
+    members = members_result.scalars().all()
     member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
-
     prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}"
 
     messages = [
@@ -201,36 +280,84 @@ async def extract_report(
         ]),
     ]
 
-    response = await provider.chat(messages, temperature=0.1, max_tokens=4096)
-    raw = response.content.strip()
+    import asyncio
+    last_err = None
+    for attempt in range(3):
+        try:
+            response = await provider.chat(messages, temperature=0.1, max_tokens=4096)
+            raw = response.content.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                raw = "\n".join(lines)
+            data = json.loads(raw)
+            ext = ExtractionResult(**data)
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning("Extraction attempt %d failed for report %s: %s", attempt + 1, record.id, e)
+            if attempt < 2:
+                await asyncio.sleep(2)
+    else:
+        logger.error("Extraction failed after 3 attempts for report %s", record.id)
+        record.status = "rejected"
+        await db.flush()
+        await db.commit()
+        raise HTTPException(status_code=500, detail="AI 解析失败，请重试")
 
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        # Remove first and last line (```json ... ```)
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        raw = "\n".join(lines)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse extraction JSON: %s\nRaw: %s", e, raw[:500])
-        raise HTTPException(status_code=500, detail="AI 返回格式异常，请重试")
-
-    return ExtractionResult(**data)
+    record.extraction = json.dumps(data, ensure_ascii=False)
+    record.report_type = ext.report_type
+    record.report_date = datetime.fromisoformat(ext.report_date) if ext.report_date else None
+    record.summary = ext.summary
+    record.patient_name = ext.patient_name
+    record.status = "pending"
+    await db.flush()
+    await db.commit()
+    await db.refresh(record)
+    return _report_to_response(record)
 
 
-@router.post("/{member_id}/reports/confirm", response_model=ConfirmResponse)
+@router.get("/{member_id}/reports/{report_id}", response_model=ReportRecordResponse)
+async def get_report(
+    member_id: int,
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> ReportRecordResponse:
+    """Get a single report record with extraction details."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    record = r.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return _report_to_response(record)
+
+
+@router.post("/{member_id}/reports/{report_id}/confirm", response_model=ConfirmResponse)
 async def confirm_report(
     member_id: int,
+    report_id: int,
     payload: ConfirmRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ConfirmResponse:
-    """Save confirmed extraction results to the database with source tracing."""
+    """Save confirmed extraction results to health records, update report status."""
     await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    record = r.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
     ext = payload.extraction
     now = datetime.now(timezone.utc)
-    # Parse report_date string to datetime
     report_dt = now
     if ext.report_date:
         try:
@@ -248,10 +375,16 @@ async def confirm_report(
     medications = ext.medications
     if payload.keep_medication_indices is not None:
         medications = [medications[i] for i in payload.keep_medication_indices if i < len(medications)]
+    lab_tests = ext.lab_tests
+    if payload.keep_lab_test_indices is not None:
+        lab_tests = [ext.lab_tests[i] for i in payload.keep_lab_test_indices if i < len(ext.lab_tests)]
+    exam_findings = ext.exam_findings
+    if payload.keep_exam_finding_indices is not None:
+        exam_findings = [ext.exam_findings[i] for i in payload.keep_exam_finding_indices if i < len(ext.exam_findings)]
 
     saved_metrics = 0
     for m in metrics:
-        record = MetricRecord(
+        db.add(MetricRecord(
             member_id=member_id,
             metric_name=m.metric_name,
             value=m.value,
@@ -261,40 +394,35 @@ async def confirm_report(
             is_abnormal=m.is_abnormal,
             measured_at=report_dt,
             source_type="report",
-            context=payload.file_name or ext.report_type,
-        )
-        db.add(record)
+            context=record.file_name or ext.report_type,
+        ))
         saved_metrics += 1
 
     saved_diagnoses = 0
     for d in diagnoses:
-        record = Diagnosis(
+        db.add(Diagnosis(
             member_id=member_id,
             disease_name=d.disease_name,
             severity=d.severity,
             diagnosed_date=datetime.fromisoformat(d.diagnosed_date).date() if d.diagnosed_date else None,
             status="active",
-        )
-        db.add(record)
+        ))
         saved_diagnoses += 1
 
     saved_medications = 0
     for med in medications:
-        record = Medication(
+        db.add(Medication(
             member_id=member_id,
             drug_name=med.drug_name,
             dosage=med.dosage,
             frequency=med.frequency,
             start_date=datetime.fromisoformat(ext.report_date).date() if ext.report_date else None,
-        )
-        db.add(record)
+        ))
         saved_medications += 1
 
-    # Lab tests: store as metric records with metric_name="lab:{report_name}:{test_name}"
     saved_lab_tests = 0
-    for lt in (ext.lab_tests if payload.keep_lab_test_indices is None
-               else [ext.lab_tests[i] for i in payload.keep_lab_test_indices if i < len(ext.lab_tests)]):
-        record = MetricRecord(
+    for lt in lab_tests:
+        db.add(MetricRecord(
             member_id=member_id,
             metric_name=f"lab:{lt.report_name}:{lt.test_name}",
             value=lt.value,
@@ -305,28 +433,35 @@ async def confirm_report(
             measured_at=report_dt,
             source_type="report",
             context=lt.report_name,
-        )
-        db.add(record)
+        ))
         saved_lab_tests += 1
 
-    # Exam findings: store as metric records with metric_name="exam:{category}:{item}"
     saved_exam_findings = 0
-    for ef in (ext.exam_findings if payload.keep_exam_finding_indices is None
-               else [ext.exam_findings[i] for i in payload.keep_exam_finding_indices if i < len(ext.exam_findings)]):
-        record = MetricRecord(
+    for ef in exam_findings:
+        value_str = f"{ef.value_num}" if ef.value_num is not None else ""
+        db.add(MetricRecord(
             member_id=member_id,
             metric_name=f"exam:{ef.finding_category}:{ef.finding_desc}",
             value=ef.value_num if ef.value_num is not None else 0,
             unit=ef.unit,
-            is_abnormal=True,  # exam findings are always notable
+            is_abnormal=True,
             measured_at=report_dt,
             source_type="report",
-            context=f"{ef.finding_category}: {ef.value_str} ({ef.conclusion or ''})",
-        )
-        db.add(record)
+            context=f"{ef.finding_category}: {value_str} ({ef.conclusion or ''})",
+        ))
         saved_exam_findings += 1
 
+    # Update report record
+    record.confirmed_extraction = json.dumps(payload.extraction.model_dump(), ensure_ascii=False)
+    record.status = "archived"
+    record.saved_metrics = saved_metrics
+    record.saved_diagnoses = saved_diagnoses
+    record.saved_medications = saved_medications
+    record.saved_lab_tests = saved_lab_tests
+    record.saved_exam_findings = saved_exam_findings
+
     await db.flush()
+    await db.commit()
     return ConfirmResponse(
         saved_metrics=saved_metrics,
         saved_diagnoses=saved_diagnoses,
@@ -334,3 +469,25 @@ async def confirm_report(
         saved_lab_tests=saved_lab_tests,
         saved_exam_findings=saved_exam_findings,
     )
+
+
+@router.delete("/{member_id}/reports/{report_id}")
+async def delete_report(
+    member_id: int,
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete a report record (and its stored extraction). Does NOT delete archived health data."""
+    await _ensure_member(db, member_id)
+    r = await db.execute(
+        select(ReportRecord).where(
+            ReportRecord.id == report_id,
+            ReportRecord.member_id == member_id,
+        )
+    )
+    record = r.scalars().first()
+    if not record:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    await db.delete(record)
+    await db.commit()
+    return {"ok": True}

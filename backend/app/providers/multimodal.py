@@ -10,6 +10,9 @@ from typing import AsyncIterator
 
 import httpx
 
+import logging
+logger = logging.getLogger(__name__)
+
 from app.providers.base import (
     Message,
     ModelProvider,
@@ -103,6 +106,8 @@ class MultimodalAPIProvider(ModelProvider):
                 json=payload,
                 headers=headers,
             )
+            if resp.status_code != 200:
+                logger.error("Multimodal API error %d: %s", resp.status_code, resp.text[:500])
             resp.raise_for_status()
             data = resp.json()
 
