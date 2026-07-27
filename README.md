@@ -105,9 +105,11 @@ ai-health-steward/
 | V1.0 | 开源发布 — 文档完善、一键部署 | 规划中 |
 
 ## 项目截图
-![[Pasted image 20260727154806.png]]
-![[Pasted image 20260727153536.png]]
-![[Pasted image 20260727154845.png]]
+
+![健康画像看板](docs/screenshots/dashboard-overview.png)
+![AI咨询报告解读](docs/screenshots/chat-report-extraction.png)
+![指标管理与录入](docs/screenshots/metric-input.png)
+
 ## 隐私声明
 
 - **数据存储**：所有健康数据存储在本地服务器，不上传到任何云端

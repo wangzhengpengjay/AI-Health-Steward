@@ -98,6 +98,12 @@ AI-Health-Steward/
 | V0.4 | Feishu channel — data collection, lightweight Q&A | Planned |
 | V1.0 | Open-source release — docs, one-click deploy | Planned |
 
+## Screenshots
+
+![Health Dashboard](docs/screenshots/dashboard-overview.png)
+![AI Chat Report Analysis](docs/screenshots/chat-report-extraction.png)
+![Metric Management](docs/screenshots/metric-input.png)
+
 ## Privacy
 
 - **Data Storage**: All health data is stored on your local server — nothing is uploaded to the cloud automatically
