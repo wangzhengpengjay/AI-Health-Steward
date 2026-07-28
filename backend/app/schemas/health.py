@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 class MetricRecordBase(BaseModel):
     metric_name: str = Field(..., min_length=1, max_length=64)
     value: float
+    text_value: Optional[str] = Field(None, max_length=128)
     unit: Optional[str] = Field(None, max_length=32)
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None

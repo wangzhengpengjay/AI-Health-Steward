@@ -68,6 +68,7 @@ export interface MetricRecord {
   member_id: number
   metric_name: string
   value: number
+  text_value?: string | null
   unit: string
   reference_lower?: number
   reference_upper?: number
@@ -82,6 +83,7 @@ export interface MetricRecord {
 export interface MetricRecordInput {
   metric_name: string
   value: number
+  text_value?: string | null
   unit: string
   measured_at: string
   reference_lower?: number

@@ -68,10 +68,10 @@ async def build_health_profile(db: AsyncSession, member_id: int) -> dict[str, An
 
     age = _age(member.birth_date)
 
-    # Diagnoses (active)
+    # Diagnoses (all statuses, including past/cured)
     diag_result = await db.execute(
         select(Diagnosis)
-        .where(Diagnosis.member_id == member_id, Diagnosis.status == "active")
+        .where(Diagnosis.member_id == member_id)
         .order_by(Diagnosis.created_at.desc())
     )
     diagnoses = diag_result.scalars().all()

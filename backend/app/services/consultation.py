@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.family import FamilyMember
-from app.models.health import MetricRecord, ReportRecord
+from app.models.health import ChatMessage, MetricRecord, ReportRecord
 from app.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from app.providers.router import ModelRouter
 from app.services.tools.registry import ToolRegistry
@@ -51,6 +51,14 @@ SYSTEM_PROMPT = """\
 - B级（常规）：饮食建议、运动指导、指标解读 → 正常回答
 
 回答时始终基于用户画像中的实际数据，不要编造数据。如果数据不足，引导用户上传报告或手动录入。
+
+重要规则 — 数据提取优先：
+当用户在对话中提到自己的健康指标数值（如"我血压180/90"、"空腹血糖6.5"等），你必须：
+1. 立即调用 extract_and_save 工具将提到的指标保存到画像
+2. 血压需要分别提取收缩压(systolic_blood_pressure)和舒张压(diastolic_blood_pressure)两条记录
+3. 保存后再基于该数据进行分析和回复
+4. 在回复中告知用户数据已记录
+不要只回复建议而遗漏数据记录。
 """
 
 EXTRACT_PROMPT = """\
@@ -71,7 +79,7 @@ EXTRACT_PROMPT = """\
     {
       "metric_name": "指标标识符，使用以下标准名称之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, total_cholesterol, triglycerides, ldl_cholesterol, hdl_cholesterol, heart_rate, weight",
       "label": "报告中显示的指标中文名",
-      "value": 数值,
+      "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
       "reference_lower": 参考下限数值或null,
       "reference_upper": 参考上限数值或null,
@@ -96,7 +104,7 @@ EXTRACT_PROMPT = """\
     {
       "report_name": "检验报告名称，单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
       "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
-      "value": 数值,
+      "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
       "reference_lower": 参考下限或null,
       "reference_upper": 参考上限或null,
@@ -134,9 +142,14 @@ class ConsultationService:
         user_message: str,
         conversation_history: list[Message] | None = None,
         image_data_url: str | None = None,
+        source: str = "webui",
     ) -> tuple[str, list[dict[str, Any]], str]:
         has_vision = image_data_url is not None
         system_prompt = SYSTEM_PROMPT
+
+        if conversation_history is None:
+            conversation_history = await self._load_recent_history(member_id, source)
+        await self._save_message(member_id, "user", user_message, source)
 
         if has_vision:
             report_data = await self._create_report_record(member_id, image_data_url)
@@ -160,6 +173,7 @@ class ConsultationService:
             if not response.tool_calls:
                 reply = response.content or ""
                 risk_level = self._assess_risk(user_message, reply)
+                await self._save_message(member_id, "assistant", reply, source)
                 return reply, tool_call_records, risk_level
 
             tool_calls_oi = [
@@ -176,6 +190,7 @@ class ConsultationService:
         response = await provider.chat(messages, tools=None)
         reply = response.content or ""
         risk_level = self._assess_risk(user_message, reply)
+        await self._save_message(member_id, "assistant", reply, source)
         return reply, tool_call_records, risk_level
 
     async def chat_stream(
@@ -184,6 +199,7 @@ class ConsultationService:
         user_message: str,
         conversation_history: list[Message] | None = None,
         image_data_url: str | None = None,
+        source: str = "webui",
     ) -> AsyncIterator[tuple[str, str | None]]:
         """Yield (event_type, data) tuples.
 
@@ -191,6 +207,10 @@ class ConsultationService:
         """
         has_vision = image_data_url is not None
         system_prompt = SYSTEM_PROMPT
+
+        if conversation_history is None:
+            conversation_history = await self._load_recent_history(member_id, source)
+        await self._save_message(member_id, "user", user_message, source)
 
         report_data: dict | None = None
         if has_vision:
@@ -217,8 +237,11 @@ class ConsultationService:
             )
 
             if not response.tool_calls:
+                full_reply: list[str] = []
                 async for delta in await provider.chat(messages, tools=None, stream=True):
+                    full_reply.append(delta)
                     yield ("delta", delta)
+                await self._save_message(member_id, "assistant", "".join(full_reply), source)
                 return
 
             tool_calls_oi = [
@@ -231,8 +254,11 @@ class ConsultationService:
                 result = await self._execute_tool_call(tc, member_id)
                 messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
 
+        full_reply: list[str] = []
         async for delta in await provider.chat(messages, tools=None, stream=True):
+            full_reply.append(delta)
             yield ("delta", delta)
+        await self._save_message(member_id, "assistant", "".join(full_reply), source)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -368,6 +394,24 @@ class ConsultationService:
             "updated_at": record.updated_at.isoformat() if record.updated_at else "",
             "extraction_json": json.dumps(data, ensure_ascii=False, indent=2),
         }
+
+    async def _load_recent_history(self, member_id: int, source: str = "webui") -> list[Message]:
+        """Load chat history from last 30 minutes."""
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone(timedelta(hours=8))) - timedelta(minutes=30)
+        result = await self.db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.member_id == member_id, ChatMessage.created_at >= cutoff)
+            .order_by(ChatMessage.created_at.asc())
+            .limit(20)
+        )
+        rows = result.scalars().all()
+        return [Message(role=r.role, content=r.content) for r in rows]
+
+    async def _save_message(self, member_id: int, role: str, content: str, source: str = "webui") -> None:
+        """Persist a chat message for future history."""
+        self.db.add(ChatMessage(member_id=member_id, role=role, content=content, source=source))
+        await self.db.flush()
 
     def _build_messages(
         self,

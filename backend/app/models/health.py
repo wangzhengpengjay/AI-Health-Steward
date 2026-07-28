@@ -39,6 +39,7 @@ class MetricRecord(Base):
     )
     metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
     value: Mapped[float] = mapped_column(nullable=False)
+    text_value: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # for non-numeric lab results (e.g. "淡黄色")
     unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     reference_lower: Mapped[Optional[float]] = mapped_column(nullable=True)
     reference_upper: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -301,6 +302,23 @@ class ReportChunk(Base):
     # pgvector column — dimension set at migration time (1024 is common for many embedding models)
     embedding = mapped_column(Vector(1024), nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ChatMessage(Base):
+    """Chat conversation history for context window."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    member_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user / assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="webui", nullable=False)  # webui / feishu
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -100,7 +100,7 @@ class TextAPIProvider(ModelProvider):
         if stream:
             return self._stream_chat(payload, headers)
 
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
@@ -133,7 +133,7 @@ class TextAPIProvider(ModelProvider):
         self, payload: dict, headers: dict
     ) -> AsyncIterator[str]:
         payload["stream"] = True
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",

@@ -173,9 +173,21 @@ class ChannelConnection:
         if not user_text:
             return
 
-        router = get_model_router()
+        from app.providers.router import ModelRouter
+        from app.services.extractor import extract_metrics_from_text
+        import asyncio as _aio
+        router = ModelRouter()
         service = ConsultationService(router=router, tool_registry=ToolRegistry(), db=db)
-        reply, _, _ = await service.chat(member_id=member_id, user_message=user_text)
+        # Run extraction and consultation in parallel
+        extract_task = _aio.create_task(extract_metrics_from_text(db, router, member_id, user_text))
+        try:
+            reply, _, _ = await service.chat(member_id=member_id, user_message=user_text, source="feishu")
+        except Exception as e:
+            logger.error("Feishu chat error (channel=%s): %s", self.channel.id, e)
+            reply = "咨询处理失败，请稍后重试。"
+        extracted = await extract_task
+        if extracted:
+            await db.commit()
         await self._send_text(chat_id, reply)
 
     async def _handle_image(self, db, member_id: int, chat_id: str, content_json: str, message_id: str = "") -> None:
@@ -196,13 +208,19 @@ class ChannelConnection:
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         data_url = f"data:image/jpeg;base64,{b64}"
 
-        router = get_model_router()
+        from app.providers.router import ModelRouter
+        router = ModelRouter()
         service = ConsultationService(router=router, tool_registry=ToolRegistry(), db=db)
-        reply, _, _ = await service.chat(
-            member_id=member_id,
-            user_message="请解析这份健康报告",
-            image_data_url=data_url,
-        )
+        try:
+            reply, _, _ = await service.chat(
+                member_id=member_id,
+                user_message="请解析这份健康报告",
+                image_data_url=data_url,
+                source="feishu",
+            )
+        except Exception as e:
+            logger.error("Feishu image chat error (channel=%s): %s", self.channel.id, e)
+            reply = "报告解析失败，请稍后重试。"
 
         confirmation = (
             "报告已解析完成！\n\n"
@@ -216,12 +234,59 @@ class ChannelConnection:
     # ------------------------------------------------------------------
 
     async def _send_text(self, chat_id: str, text: str) -> None:
+        """Send message as Feishu interactive card with Markdown rendering."""
         if not self._client:
             return
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._send_text_sync, chat_id, text)
+        await loop.run_in_executor(None, self._send_card_sync, chat_id, text)
 
-    def _send_text_sync(self, chat_id: str, text: str) -> None:
+    def _send_card_sync(self, chat_id: str, text: str) -> None:
+        """Send text as a Feishu interactive card with markdown element.
+
+        Feishu card markdown supports: bold, italic, strikethrough, links,
+        hr, lists, code blocks, images, etc.
+        We split long text into multiple markdown elements (max ~3000 chars each).
+        """
+        elements = []
+        # Split by lines to avoid exceeding content limits, chunk at ~2800 chars
+        lines = text.split("\n")
+        chunk_lines: list[str] = []
+        chunk_len = 0
+        for line in lines:
+            if chunk_len + len(line) > 2800 and chunk_lines:
+                elements.append({
+                    "tag": "markdown",
+                    "content": "\n".join(chunk_lines),
+                })
+                chunk_lines = []
+                chunk_len = 0
+            chunk_lines.append(line)
+            chunk_len += len(line) + 1
+        if chunk_lines:
+            elements.append({
+                "tag": "markdown",
+                "content": "\n".join(chunk_lines),
+            })
+
+        card = {
+            "elements": elements,
+        }
+        req = CreateMessageRequest.builder() \
+            .receive_id_type("chat_id") \
+            .request_body(CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("interactive")
+                .content(json.dumps(card))
+                .build()) \
+            .build()
+        resp = self._client.im.v1.message.create(req)
+        if not resp.success():
+            logger.error("Feishu send failed: code=%s msg=%s", resp.code, resp.msg)
+            # Fallback to plain text if card fails
+            self._send_plain_text_sync(chat_id, text)
+
+    def _send_plain_text_sync(self, chat_id: str, text: str) -> None:
+        """Fallback: send as plain text message."""
         req = CreateMessageRequest.builder() \
             .receive_id_type("chat_id") \
             .request_body(CreateMessageRequestBody.builder()
@@ -232,7 +297,7 @@ class ChannelConnection:
             .build()
         resp = self._client.im.v1.message.create(req)
         if not resp.success():
-            logger.error("Feishu send failed: code=%s msg=%s", resp.code, resp.msg)
+            logger.error("Feishu plain text send failed: code=%s msg=%s", resp.code, resp.msg)
 
     async def _download_image(self, image_key: str, message_id: str = "") -> bytes | None:
         if not self._client or not message_id:

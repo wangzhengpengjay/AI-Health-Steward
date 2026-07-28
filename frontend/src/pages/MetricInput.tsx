@@ -6,7 +6,7 @@ import {
   Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ComposedChart,
 } from 'recharts'
-import { metricsApi, ApiError } from '@/lib/api'
+import { membersApi, metricsApi, ApiError } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 import type { MetricRecord, SourceType } from '@/types'
 
@@ -30,6 +30,7 @@ interface MetricTab {
   color: string
   lines: MetricLine[]
   bmiConfig?: { refLower: number; refUpper: number; warningUpper: number; label: string }
+  mergeLines?: boolean
   groupInput?: boolean  // when true, all lines are entered together (e.g., blood pressure systolic+diastolic)
 }
 
@@ -40,6 +41,7 @@ interface DynamicTab {
   color?: string
   lines: { key: string; label: string; refLower: number; refUpper: number; color: string; warningUpper: number; criticalUpper: number; isLowerAbnormal?: boolean; contextOptions?: string[]; contextLabel?: string }[]
   bmiConfig?: { refLower: number; refUpper: number; warningUpper: number; label: string }
+  mergeLines?: boolean
   groupInput?: boolean
 }
 
@@ -52,7 +54,7 @@ const METRIC_TABS: MetricTab[] = [
     ],
   },
   {
-    label: '血糖', unit: 'mmol/L', color: '#0891B2',
+    label: '血糖', unit: 'mmol/L', color: '#0891B2', mergeLines: true,
     lines: [
       { key: 'fasting_glucose', label: '空腹血糖', refLower: 3.9, refUpper: 6.1, color: '#0891B2', warningUpper: 7.0, criticalUpper: 11.1 },
       { key: 'postmeal_glucose', label: '餐后2h血糖', refLower: 3.9, refUpper: 7.8, color: '#22D3EE', warningUpper: 11.1, criticalUpper: 16.7 },
@@ -75,6 +77,12 @@ const METRIC_TABS: MetricTab[] = [
     bmiConfig: { refLower: 18.5, refUpper: 24.0, warningUpper: 28.0, label: 'BMI' },
   },
 ]
+
+// Get local datetime string for <input type="datetime-local">
+function localDatetimeStr(d: Date = new Date()): string {
+  const off = d.getTimezoneOffset() * 60000
+  return new Date(d.getTime() - off).toISOString().slice(0, 16)
+}
 
 export default function MetricInput() {
   const { currentMemberId, members } = useMemberStore()
@@ -165,6 +173,14 @@ export default function MetricInput() {
             }
           })
         )
+        // For weight/BMI tab, also fetch bmi records for the chart
+        if (tab.bmiConfig) {
+          try {
+            results['bmi'] = await metricsApi.getByName(String(currentMemberId), 'bmi')
+          } catch {
+            results['bmi'] = []
+          }
+        }
       }
       return results
     },
@@ -218,14 +234,30 @@ export default function MetricInput() {
     const point: Record<string, string | number | boolean> = {
       time: new Date(date).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
     }
-    tab.lines.forEach((line) => {
-      const records = allRecords[line.key] || []
-      const record = records.find((r) => r.measured_at === date)
-      if (record) {
-        point[line.key] = record.value
-        point[`${line.key}_abnormal`] = record.is_abnormal
+    if (tab.mergeLines) {
+      // Merge all sub-lines into one series, pick first match at this timestamp
+      for (const line of tab.lines) {
+        const records = allRecords[line.key] || []
+        const record = records.find((r) => r.measured_at === date)
+        if (record) {
+          point['value'] = record.value
+          point['value_abnormal'] = record.is_abnormal
+          point['type'] = line.label
+          break
+        }
       }
-    })
+    } else {
+      tab.lines.forEach((line) => {
+        // For weight/BMI tab, use bmi records for the chart
+        const chartKey = tab.bmiConfig ? "bmi" : line.key
+        const records = allRecords[chartKey] || []
+        const record = records.find((r) => r.measured_at === date)
+        if (record) {
+          point[line.key] = record.value
+          point[`${line.key}_abnormal`] = record.is_abnormal
+        }
+      })
+    }
     return point
   })
 
@@ -330,7 +362,7 @@ export default function MetricInput() {
               <p className="mt-1 text-2xl font-semibold text-slate-800">
                 {tab.lines.map((line) => {
                   const records = allRecords[line.key] || []
-                  return records[0]?.value ?? '--'
+                  return records[0]?.text_value ?? records[0]?.value ?? '--'
                 }).join(' / ')}
                 <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
               </p>
@@ -407,7 +439,7 @@ export default function MetricInput() {
             <ExamTimeline allRecords={allRecords} tabLabel={tab.label} />
           ) : (
           <>
-          <h3 className="mb-4 text-sm font-medium text-slate-700">{tab.label}趋势图</h3>
+          <h3 className="mb-4 text-sm font-medium text-slate-700">{tab.bmiConfig ? 'BMI' : tab.label}趋势图</h3>
           {isLoading ? (
             <div className="flex h-64 items-center justify-center">
               <span className="material-symbols-rounded animate-spin text-slate-300">progress_activity</span>
@@ -426,7 +458,9 @@ export default function MetricInput() {
                 <Tooltip
                   contentStyle={{ borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 12 }}
                   formatter={((v: unknown, name: unknown) => {
-                    return [`${v} ${tab.unit}`, String(name)]
+                    const unit = tab.bmiConfig ? 'kg/m²' : tab.unit
+                    const label = tab.bmiConfig ? 'BMI' : String(name)
+                    return [`${v} ${unit}`, label]
                   }) as never}
                 />
                 {/* Reference lines for each metric line */}
@@ -444,12 +478,39 @@ export default function MetricInput() {
                   </g>
                 ))}
                 {/* Lines */}
-                {tab.lines.map((line) => (
+                {tab.mergeLines ? (
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    name={tab.label}
+                    stroke={tab.color}
+                    strokeWidth={2}
+                    connectNulls
+                    dot={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                      const { cx, cy, payload } = props
+                      if (cx === undefined || cy === undefined) return <g key={`g-merge-${cx}`} />
+                      const isAbnormal = payload?.['value_abnormal']
+                      return (
+                        <circle
+                          key={`dot-merge-${cx}-${cy}`}
+                          cx={cx}
+                          cy={cy}
+                          r={4}
+                          fill={isAbnormal ? '#F56C6C' : tab.color}
+                          stroke="#fff"
+                          strokeWidth={1.5}
+                        />
+                      )
+                    }}
+                  />
+                ) : (
+                  tab.lines.map((line) => {
+                  return (
                   <Line
                     key={line.key}
                     type="monotone"
                     dataKey={line.key}
-                    name={line.label}
+                    name={tab.bmiConfig ? 'BMI' : line.label}
                     stroke={line.color}
                     strokeWidth={2}
                     connectNulls
@@ -470,24 +531,41 @@ export default function MetricInput() {
                       )
                     }}
                   />
-                ))}
+                  )
+                })
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           )}
           {/* Legend with reference ranges */}
           <div className="mt-3 flex flex-wrap gap-4">
-            {tab.lines.map((line) => (
+            {tab.mergeLines ? (
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tab.color }} />
+                {tab.label}
+                <span className="text-slate-400">({tab.lines.map(l => l.label).join('/')})</span>
+              </div>
+            ) : (
+              tab.lines.map((line) => {
+              const isBmi = !!tab.bmiConfig
+              const label = isBmi ? 'BMI' : line.label
+              const unit = isBmi ? 'kg/m²' : tab.unit
+              const lo = isBmi ? tab.bmiConfig!.refLower : line.refLower
+              const hi = isBmi ? tab.bmiConfig!.refUpper : line.refUpper
+              return (
               <div key={line.key} className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
-                {line.label}
-                {line.refUpper > 0 && !line.isLowerAbnormal && (
-                  <span className="text-slate-400">({line.refLower}-{line.refUpper} {tab.unit})</span>
+                {label}
+                {hi > 0 && !line.isLowerAbnormal && (
+                  <span className="text-slate-400">({lo}-{hi} {unit})</span>
                 )}
-                {line.isLowerAbnormal && line.refLower > 0 && (
-                  <span className="text-slate-400">(≥{line.refLower} {tab.unit})</span>
+                {line.isLowerAbnormal && lo > 0 && (
+                  <span className="text-slate-400">(≥{lo} {unit})</span>
                 )}
               </div>
-            ))}
+              )
+            })
+            )}
           </div>
           </>
           )}
@@ -524,7 +602,7 @@ export default function MetricInput() {
                                 <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
                                 <span className="text-xs text-slate-500">{line.label}</span>
                                 <span className="text-sm font-medium text-slate-700">
-                                  {record ? record.value : '--'}
+                                  {record ? (record.text_value || record.value) : '--'}
                                 </span>
                                 {record && record.is_abnormal && (
                                   <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-xs text-amber-600">
@@ -621,9 +699,14 @@ export default function MetricInput() {
           selectedLineKey={addLineKey}
           onSelectLine={setAddLineKey}
           onClose={() => setShowAddModal(false)}
-          onSubmit={(entries) => {
+          onSubmit={(entries, heightValue) => {
             // Submit all entries sequentially (group input may have multiple)
             entries.forEach((data) => addMutation.mutate(data))
+            // Update member height if provided (weight tab)
+            if (heightValue && currentMemberId) {
+              membersApi.update(Number(currentMemberId), { height: heightValue })
+                .then(() => queryClient.invalidateQueries({ queryKey: ['members'] }))
+            }
           }}
           isLoading={addMutation.isPending}
           error={addMutation.error instanceof ApiError ? addMutation.error.message : null}
@@ -662,7 +745,7 @@ interface AddDataModalProps {
   selectedLineKey: string
   onSelectLine: (key: string) => void
   onClose: () => void
-  onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }[]) => void
+  onSubmit: (data: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }[], heightValue?: number) => void
   isLoading: boolean
   error: string | null
   memberHeight?: number  // for BMI calculation
@@ -678,7 +761,7 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
   // For single input
   const [value, setValue] = useState('')
   const [height, setHeight] = useState(memberHeight?.toString() || '')
-  const [measuredAt, setMeasuredAt] = useState(new Date().toISOString().slice(0, 16))
+  const [measuredAt, setMeasuredAt] = useState(localDatetimeStr())
   const [context, setContext] = useState('')
 
   // Real-time BMI calculation
@@ -690,7 +773,7 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const isoTime = new Date(measuredAt).toISOString()
+    const isoTime = measuredAt + ':00+08:00'
     if (isGroup) {
       // Submit all lines together with the same timestamp
       const entries = tab.lines
@@ -713,7 +796,7 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
     } else {
       const numValue = parseFloat(value)
       if (isNaN(numValue)) return
-      onSubmit([{
+      const entries: { metric_name: string; value: number; unit: string; measured_at: string; reference_lower?: number; reference_upper?: number; context?: string }[] = [{
         metric_name: selectedLine.key,
         value: numValue,
         unit: tab.unit,
@@ -721,7 +804,20 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
         reference_lower: selectedLine.refLower || undefined,
         reference_upper: selectedLine.refUpper || undefined,
         context: context || undefined,
-      }])
+      }]
+      // Auto-add BMI record for weight tab when height is available
+      if (isWeightTab && bmi !== null) {
+        entries.push({
+          metric_name: 'bmi',
+          value: bmi,
+          unit: '',
+          measured_at: isoTime,
+          reference_lower: 18.5,
+          reference_upper: 24.0,
+          context: '自动计算',
+        })
+      }
+      onSubmit(entries, isWeightTab ? heightNum : undefined)
     }
   }
 
@@ -931,7 +1027,7 @@ function EditModal({ tab, editData, allRecords, onClose, onSubmit, isLoading }: 
   })
   const [measuredAt, setMeasuredAt] = useState(() => {
     const r = groupRecords[0]?.record
-    return r ? new Date(r.measured_at).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16)
+    return r ? new Date(r.measured_at).toISOString().slice(0, 16) : localDatetimeStr()
   })
   const [context, setContext] = useState(() => {
     const r = groupRecords[0]?.record
@@ -940,7 +1036,7 @@ function EditModal({ tab, editData, allRecords, onClose, onSubmit, isLoading }: 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const isoTime = new Date(measuredAt).toISOString()
+    const isoTime = measuredAt + ':00+08:00'
     const entries = groupRecords
       .map(({ line, record }) => {
         const v = parseFloat(groupValues[line.key] || '')

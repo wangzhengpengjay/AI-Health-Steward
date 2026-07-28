@@ -47,7 +47,7 @@ EXTRACT_PROMPT = """\
     {
       "metric_name": "指标标识符，使用以下标准名称之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, total_cholesterol, triglycerides, ldl_cholesterol, hdl_cholesterol, heart_rate, weight",
       "label": "报告中显示的指标中文名",
-      "value": 数值,
+      "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
       "reference_lower": 参考下限数值或null,
       "reference_upper": 参考上限数值或null,
@@ -72,7 +72,7 @@ EXTRACT_PROMPT = """\
     {
       "report_name": "检验报告名称，单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
       "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
-      "value": 数值,
+      "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
       "reference_lower": 参考下限或null,
       "reference_upper": 参考上限或null,
@@ -98,7 +98,7 @@ EXTRACT_PROMPT = """\
 class MetricItem(BaseModel):
     metric_name: str
     label: str
-    value: float
+    value: Any
     unit: Optional[str] = None
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None
@@ -117,7 +117,7 @@ class MedicationItem(BaseModel):
 class LabTestItem(BaseModel):
     report_name: str
     test_name: str
-    value: float
+    value: Any
     unit: Optional[str] = None
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None
@@ -126,7 +126,7 @@ class LabTestItem(BaseModel):
 class ExamFindingItem(BaseModel):
     finding_category: str
     finding_desc: str
-    value_num: Optional[float] = None
+    value_num: Optional[Any] = None
     unit: Optional[str] = None
     conclusion: Optional[str] = None
 
@@ -428,10 +428,12 @@ async def confirm_report(
 
     saved_metrics = 0
     for m in metrics:
+        is_num = isinstance(m.value, (int, float))
         db.add(MetricRecord(
             member_id=member_id,
             metric_name=m.metric_name,
-            value=m.value,
+            value=float(m.value) if is_num else 0,
+            text_value=str(m.value) if not is_num else None,
             unit=m.unit,
             reference_lower=m.reference_lower,
             reference_upper=m.reference_upper,
@@ -466,10 +468,12 @@ async def confirm_report(
 
     saved_lab_tests = 0
     for lt in lab_tests:
+        is_num_lt = isinstance(lt.value, (int, float))
         db.add(MetricRecord(
             member_id=member_id,
             metric_name=f"lab:{lt.report_name}:{lt.test_name}",
-            value=lt.value,
+            value=float(lt.value) if is_num_lt else 0,
+            text_value=str(lt.value) if not is_num_lt else None,
             unit=lt.unit,
             reference_lower=lt.reference_lower,
             reference_upper=lt.reference_upper,
@@ -486,7 +490,7 @@ async def confirm_report(
         db.add(MetricRecord(
             member_id=member_id,
             metric_name=f"exam:{ef.finding_category}:{ef.finding_desc}",
-            value=ef.value_num if ef.value_num is not None else 0,
+            value=float(ef.value_num) if isinstance(ef.value_num, (int, float)) else 0,
             unit=ef.unit,
             is_abnormal=True,
             measured_at=report_dt,

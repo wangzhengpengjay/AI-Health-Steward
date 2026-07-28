@@ -96,6 +96,11 @@ async def chat(
     if file:
         image_data_url = _file_to_data_url(file)
 
+    # Pre-extract metrics in parallel with consultation
+    from app.services.extractor import extract_metrics_from_text
+    import asyncio as _aio
+    extract_task = _aio.create_task(extract_metrics_from_text(db, model_router, member_id, message))
+
     service = ConsultationService(
         router=model_router,
         tool_registry=ToolRegistry(),
@@ -115,6 +120,9 @@ async def chat(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"AI 服务暂时不可用: {e}",
         )
+    extracted = await extract_task
+    if extracted:
+        await db.flush()
     return ChatResponse(
         reply=reply,
         tool_calls=[ToolCallRecord(**tc) for tc in tool_calls],
@@ -142,6 +150,10 @@ async def chat_stream(
     if file:
         image_data_url = _file_to_data_url(file)
 
+    from app.services.extractor import extract_metrics_from_text
+    import asyncio as _aio
+    extract_task = _aio.create_task(extract_metrics_from_text(db, model_router, member_id, message))
+
     service = ConsultationService(
         router=model_router,
         tool_registry=ToolRegistry(),
@@ -165,6 +177,7 @@ async def chat_stream(
             err = json.dumps({"error": f"AI 服务暂时不可用: {e}"}, ensure_ascii=False)
             yield f"data: {err}\n\n"
         yield "data: [DONE]\n\n"
+        await extract_task
 
     return StreamingResponse(
         event_generator(),

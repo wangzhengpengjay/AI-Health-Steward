@@ -253,7 +253,7 @@ export const profileApi = {
 export interface ExtractedMetric {
   metric_name: string
   label: string
-  value: number
+  value: number | string
   unit?: string
   reference_lower?: number
   reference_upper?: number
@@ -275,7 +275,7 @@ export interface ExtractedMedication {
 export interface ExtractedLabTest {
   report_name: string
   test_name: string
-  value: number
+  value: number | string
   unit?: string
   reference_lower?: number
   reference_upper?: number
@@ -285,7 +285,7 @@ export interface ExtractedLabTest {
 export interface ExtractedExamFinding {
   finding_category: string
   finding_desc: string
-  value_num?: number | null
+  value_num?: number | string | null
   unit?: string
   conclusion?: string
 }
