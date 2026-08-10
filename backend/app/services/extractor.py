@@ -1,8 +1,12 @@
-"""Model-based health metric extractor.
+"""Model-based health metric extractor. [DEPRECATED]
 
 Calls text model to extract structured metrics from user messages,
 then persists them. Limited to blood pressure, blood glucose,
 height, and weight.
+
+注意（P0-1）：本模块已不再被 chat.py / feishu.py 调用。
+指标提取已统一交由工具调用 extract_and_save 完成（覆盖更广、带确认闭环），
+避免对同一条消息重复调用模型。此文件保留仅供未来报告文本兑底等用途参考。
 """
 from __future__ import annotations
 

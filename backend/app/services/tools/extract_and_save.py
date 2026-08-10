@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.family import FamilyMember
 from app.models.health import Lifestyle, MetricRecord
 from app.services.tools.base import HealthTool
 
@@ -81,11 +82,29 @@ class ExtractAndSaveTool(HealthTool):
         measured_at_str = kwargs.get("measured_at")
         measured_at = self._parse_datetime(measured_at_str) if measured_at_str else datetime.now(timezone.utc)
 
+        # P0-2: 按成员年龄自动填充默认参考范围并计算异常/危急
+        from app.core.reference_ranges import resolve_reference_range
+        member = await db.get(FamilyMember, member_id)
+        age = _age(member.birth_date) if member else None
+        ref_lo, ref_hi = resolve_reference_range(metric_name, age)
+        value_f = float(value)
+        is_abnormal = False
+        is_critical = False
+        if ref_lo is not None and ref_hi is not None:
+            is_abnormal = not (ref_lo <= value_f <= ref_hi)
+            is_critical = bool(
+                is_abnormal and (value_f < ref_lo * 0.5 or value_f > ref_hi * 1.5)
+            )
+
         record = MetricRecord(
             member_id=member_id,
             metric_name=metric_name,
-            value=float(value),
+            value=value_f,
             unit=kwargs.get("unit"),
+            reference_lower=ref_lo,
+            reference_upper=ref_hi,
+            is_abnormal=is_abnormal,
+            is_critical=is_critical,
             measured_at=measured_at,
             source_type="chat_extract",
             context=kwargs.get("context"),
@@ -94,11 +113,14 @@ class ExtractAndSaveTool(HealthTool):
         await db.flush()
         await db.refresh(record)
 
+        flag = "（异常）" if is_abnormal else ""
         return {
             "saved": True,
             "data_type": "metric",
             "record_id": record.id,
-            "message": f"已记录您的{metric_name}数据：{value}{kwargs.get('unit', '')}",
+            "is_abnormal": is_abnormal,
+            "is_critical": is_critical,
+            "message": f"已记录您的{metric_name}数据：{value}{kwargs.get('unit', '')}{flag}",
         }
 
     async def _save_symptom(
@@ -167,3 +189,14 @@ class ExtractAndSaveTool(HealthTool):
             return datetime.fromisoformat(value)
         except (ValueError, TypeError):
             return datetime.now(timezone.utc)
+
+
+def _age(birth_date) -> int | None:
+    """Compute age in years from birth_date (date or None)."""
+    if not birth_date:
+        return None
+    from datetime import date
+    today = date.today()
+    return today.year - birth_date.year - (
+        (today.month, today.day) < (birth_date.month, birth_date.day)
+    )

@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     APP_DEBUG: bool = True
     CORS_ORIGINS: str = "http://localhost:5173"
 
+    # Auth (P0-3): 留空 = 本地开放模式；非空 = 要求 Authorization: Bearer <token>
+    AUTH_TOKEN: str = ""
+    # Rate limit (P0-3): /chat 与 /chat/stream 每成员每分钟最大请求数
+    CHAT_RATE_LIMIT_PER_MIN: int = 20
+
     # Postgres
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432

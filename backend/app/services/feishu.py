@@ -174,20 +174,16 @@ class ChannelConnection:
             return
 
         from app.providers.router import ModelRouter
-        from app.services.extractor import extract_metrics_from_text
-        import asyncio as _aio
         router = ModelRouter()
         service = ConsultationService(router=router, tool_registry=ToolRegistry(), db=db)
-        # Run extraction and consultation in parallel
-        extract_task = _aio.create_task(extract_metrics_from_text(db, router, member_id, user_text))
+        # 指标提取完全交由工具调用 extract_and_save 完成，避免重复调用模型（P0-1）
         try:
             reply, _, _ = await service.chat(member_id=member_id, user_message=user_text, source="feishu")
+            await db.commit()
         except Exception as e:
             logger.error("Feishu chat error (channel=%s): %s", self.channel.id, e)
+            await db.rollback()
             reply = "咨询处理失败，请稍后重试。"
-        extracted = await extract_task
-        if extracted:
-            await db.commit()
         await self._send_text(chat_id, reply)
 
     async def _handle_image(self, db, member_id: int, chat_id: str, content_json: str, message_id: str = "") -> None:

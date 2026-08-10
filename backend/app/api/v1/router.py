@@ -1,7 +1,9 @@
 """Aggregate all v1 route modules."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.core.security import require_auth
 
 from app.api.routes import members, metrics, providers
 from app.api.routes import chat
@@ -11,7 +13,11 @@ from app.api.routes import checkup
 from app.api.routes import settings
 from app.api.routes import feishu
 
-api_router = APIRouter(prefix="/api/v1")
+# P0-3: 所有业务接口在配置了 AUTH_TOKEN 时要求 Bearer 令牌；未配置时保持开放。
+api_router = APIRouter(
+    prefix="/api/v1",
+    dependencies=[Depends(require_auth)],
+)
 api_router.include_router(members.router)
 api_router.include_router(metrics.router)
 api_router.include_router(providers.router)

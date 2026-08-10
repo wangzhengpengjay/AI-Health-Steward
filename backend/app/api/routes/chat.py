@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.security import rate_limited
 from app.models.family import FamilyMember
 from app.providers.router import ModelRouter, ProviderNotConfiguredError, get_model_router
 from app.services.consultation import ConsultationService
@@ -88,6 +89,7 @@ async def chat(
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
+    _: None = Depends(rate_limited()),
 ) -> ChatResponse:
     """Non-streaming chat endpoint. Supports optional image/PDF upload."""
     await _ensure_member(db, member_id)
@@ -96,11 +98,7 @@ async def chat(
     if file:
         image_data_url = _file_to_data_url(file)
 
-    # Pre-extract metrics in parallel with consultation
-    from app.services.extractor import extract_metrics_from_text
-    import asyncio as _aio
-    extract_task = _aio.create_task(extract_metrics_from_text(db, model_router, member_id, message))
-
+    # 指标提取完全交由工具调用 extract_and_save 完成，避免重复调用模型（P0-1）
     service = ConsultationService(
         router=model_router,
         tool_registry=ToolRegistry(),
@@ -120,9 +118,6 @@ async def chat(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"AI 服务暂时不可用: {e}",
         )
-    extracted = await extract_task
-    if extracted:
-        await db.flush()
     return ChatResponse(
         reply=reply,
         tool_calls=[ToolCallRecord(**tc) for tc in tool_calls],
@@ -137,6 +132,7 @@ async def chat_stream(
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     model_router: ModelRouter = Depends(get_model_router),
+    _: None = Depends(rate_limited()),
 ) -> StreamingResponse:
     """SSE streaming chat endpoint. Supports optional image/PDF upload.
 
@@ -150,10 +146,7 @@ async def chat_stream(
     if file:
         image_data_url = _file_to_data_url(file)
 
-    from app.services.extractor import extract_metrics_from_text
-    import asyncio as _aio
-    extract_task = _aio.create_task(extract_metrics_from_text(db, model_router, member_id, message))
-
+    # 指标提取完全交由工具调用 extract_and_save 完成，避免重复调用模型（P0-1）
     service = ConsultationService(
         router=model_router,
         tool_registry=ToolRegistry(),
@@ -177,7 +170,6 @@ async def chat_stream(
             err = json.dumps({"error": f"AI 服务暂时不可用: {e}"}, ensure_ascii=False)
             yield f"data: {err}\n\n"
         yield "data: [DONE]\n\n"
-        await extract_task
 
     return StreamingResponse(
         event_generator(),
