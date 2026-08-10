@@ -8,6 +8,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { to: '/home', label: '家庭速览', icon: 'home' },
   { to: '/dashboard', label: '画像看板', icon: 'dashboard' },
   { to: '/chat', label: 'AI 咨询', icon: 'forum' },
   { to: '/reports', label: '报告管理', icon: 'description' },
