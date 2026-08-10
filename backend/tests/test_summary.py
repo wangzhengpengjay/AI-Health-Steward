@@ -9,17 +9,19 @@ from app.models.health import MetricRecord
 from app.services import summary_service
 
 
-def _metric(name, value, measured_at, abnormal=False, critical=False, unit="", lo=None, hi=None):
+def _metric(name, value, measured_at, abnormal=False, critical=False, unit="", lo=None, hi=None, text_value=None, context=""):
     return MetricRecord(
         member_id=6,
         metric_name=name,
         value=value,
+        text_value=text_value,
         unit=unit,
         is_abnormal=abnormal,
         is_critical=critical,
         reference_lower=lo,
         reference_upper=hi,
         measured_at=measured_at,
+        context=context or None,
     )
 
 
@@ -53,16 +55,56 @@ def test_trend_down():
     assert t["direction"] == "down"
 
 
-def test_report_metrics_excluded_from_stats():
+def test_all_metrics_included_in_stats():
     now = datetime(2026, 8, 1, tzinfo=timezone.utc)
     metrics = [
-        _metric("lab:血常规", 10.0, now),
-        _metric("exam:B超", 1.0, now),
+        _metric("lab:血常规:白细胞计数", 10.0, now, unit="10^9/L"),
+        _metric("exam:B超:肝囊肿", 1.0, now, text_value="有", abnormal=True),
         _metric("heart_rate", 70.0, now, unit="bpm"),
     ]
     stats = _build_stats(metrics)
-    assert len(stats["trends"]) == 1
-    assert stats["trends"][0]["metric"] == "heart_rate"
+    names = {t["metric"] for t in stats["trends"]}
+    assert names == {"lab:血常规:白细胞计数", "exam:B超:肝囊肿", "heart_rate"}
+    # numeric lab metric gets a real trend
+    lab = next(t for t in stats["trends"] if t["metric"] == "lab:血常规:白细胞计数")
+    assert lab["numeric"] is True and lab["first"] == 10.0
+    # non-numeric exam metric is counted but has no meaningless numeric trend
+    exam = next(t for t in stats["trends"] if t["metric"] == "exam:B超:肝囊肿")
+    assert exam["numeric"] is False and exam["count"] == 1 and exam["first"] is None
+
+
+def test_lab_exam_events_include_context_and_text_value():
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    metrics = [
+        _metric("lab:肝功能:谷丙转氨酶", 80.0, now, abnormal=True, unit="U/L", context="血生化"),
+        _metric("exam:眼底检查:视网膜病变", 1.0, now, text_value="阳性", abnormal=True, context="眼底检查"),
+        _metric("heart_rate", 200.0, now, critical=True, unit="bpm"),
+    ]
+    events = summary_service._build_events(metrics)
+    abnormal = events["abnormal"]
+    assert len(abnormal) == 2
+    # text value preferred, context attached
+    exam = next(e for e in abnormal if e["metric"].startswith("exam:"))
+    assert exam["value"] == "阳性" and exam["context"] == "眼底检查"
+    lab = next(e for e in abnormal if e["metric"].startswith("lab:"))
+    assert lab["value"] == 80.0 and lab["context"] == "血生化"
+    assert events["critical"][0]["metric"] == "heart_rate"
+
+
+def test_render_markdown_shows_context_and_non_numeric():
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    metrics = [
+        _metric("lab:血常规:白细胞计数", 12.5, now, abnormal=True, unit="10^9/L", context="血常规"),
+        _metric("exam:尿检:蛋白尿", 1.0, now, text_value="阳性", abnormal=True, context="尿常规"),
+        _metric("fasting_glucose", 5.0, now, unit="mmol/L"),
+    ]
+    stats = summary_service._build_stats(metrics)
+    events = summary_service._build_events(metrics)
+    md = summary_service._render_markdown("monthly", date(2026, 8, 1), date(2026, 8, 10), stats, events, [], [])
+    assert "白细胞计数" in md
+    assert "来源：血常规" in md
+    assert "来源：尿常规" in md
+    assert "蛋白尿" in md
 
 
 def test_events_collect_abnormal_and_critical():

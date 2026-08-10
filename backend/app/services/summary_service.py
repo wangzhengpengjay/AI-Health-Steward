@@ -76,25 +76,31 @@ async def _load_profile_events(
 
 
 def _build_stats(metrics: list[MetricRecord]) -> dict[str, Any]:
-    """Compute per-metric trend (first/last/min/max/avg, direction) for non-report metrics."""
+    """Compute per-metric trend for ALL user metrics (incl. lab:/exam: report metrics)."""
     by_name: dict[str, list[MetricRecord]] = {}
     for m in metrics:
-        if m.metric_name.startswith("lab:") or m.metric_name.startswith("exam:"):
-            continue
         by_name.setdefault(m.metric_name, []).append(m)
 
     trends: list[dict[str, Any]] = []
     for name, recs in by_name.items():
         recs.sort(key=lambda r: r.measured_at)
         first, last = recs[0], recs[-1]
-        values = [r.value for r in recs if r.value is not None]
-        delta = (last.value - first.value) if first.value is not None and last.value is not None else None
-        direction = "up" if (delta is not None and delta > 0) else ("down" if (delta is not None and delta < 0) else "flat")
+        # numeric trend only makes sense for records with a numeric value (text_value None)
+        numeric_recs = [r for r in recs if r.value is not None and r.text_value is None]
+        values = [r.value for r in numeric_recs]
+        numeric = len(values) > 0
+        if numeric:
+            delta = values[-1] - values[0]
+            direction = "up" if delta > 0 else ("down" if delta < 0 else "flat")
+        else:
+            delta = None
+            direction = "flat"
         trends.append({
             "metric": name,
             "label": _metric_label(name),
-            "first": first.value,
-            "last": last.value,
+            "numeric": numeric,
+            "first": values[0] if numeric else None,
+            "last": values[-1] if numeric else None,
             "unit": last.unit or "",
             "delta": round(delta, 2) if delta is not None else None,
             "direction": direction,
@@ -109,17 +115,22 @@ def _build_stats(metrics: list[MetricRecord]) -> dict[str, Any]:
     return {"trends": trends}
 
 
+def _event_item(m: MetricRecord) -> dict[str, Any]:
+    """Build an abnormal/critical event entry, preferring the readable text value and adding report source."""
+    value = m.text_value if m.text_value is not None else m.value
+    return {
+        "metric": m.metric_name,
+        "label": _metric_label(m.metric_name),
+        "value": value,
+        "unit": m.unit or "",
+        "date": m.measured_at.date().isoformat(),
+        "context": m.context or "",
+    }
+
+
 def _build_events(metrics: list[MetricRecord]) -> dict[str, Any]:
-    abnormal = [
-        {"metric": m.metric_name, "label": _metric_label(m.metric_name), "value": m.value, "unit": m.unit or "", "date": m.measured_at.date().isoformat()}
-        for m in metrics
-        if m.is_abnormal and not m.metric_name.startswith("lab:") and not m.metric_name.startswith("exam:")
-    ]
-    critical = [
-        {"metric": m.metric_name, "label": _metric_label(m.metric_name), "value": m.value, "unit": m.unit or "", "date": m.measured_at.date().isoformat()}
-        for m in metrics
-        if m.is_critical and not m.metric_name.startswith("lab:") and not m.metric_name.startswith("exam:")
-    ]
+    abnormal = [_event_item(m) for m in metrics if m.is_abnormal]
+    critical = [_event_item(m) for m in metrics if m.is_critical]
     return {"abnormal": abnormal, "critical": critical}
 
 
@@ -153,6 +164,10 @@ def _render_markdown(
     if stats.get("trends"):
         lines.append("## 指标趋势")
         for t in stats["trends"]:
+            if not t.get("numeric", True):
+                # non-numeric (text) metric: no value trend to show
+                lines.append(f"- {t['label']}：{t['count']} 条记录" + (" ⚠ 最新值异常" if t.get("abnormal_last") else ""))
+                continue
             direction_str = {"up": "上升", "down": "下降", "flat": "平稳"}.get(t["direction"], "平稳")
             line = f"- {t['label']}：{t['first']} → {t['last']} {t['unit']}（{direction_str}"
             if t["delta"]:
@@ -166,12 +181,18 @@ def _render_markdown(
     if events.get("critical"):
         lines.append("## 危急指标（请尽快就医）")
         for e in events["critical"]:
-            lines.append(f"- ⛔ {e['label']}：{e['value']} {e['unit']}（{e['date']}）")
+            line = f"- ⛔ {e['label']}：{e['value']} {e['unit']}（{e['date']}）"
+            if e.get("context"):
+                line += f"（来源：{e['context']}）"
+            lines.append(line)
         lines.append("")
     if events.get("abnormal"):
         lines.append("## 异常指标（建议关注）")
         for e in events["abnormal"]:
-            lines.append(f"- ⚠ {e['label']}：{e['value']} {e['unit']}（{e['date']}）")
+            line = f"- ⚠ {e['label']}：{e['value']} {e['unit']}（{e['date']}）"
+            if e.get("context"):
+                line += f"（来源：{e['context']}）"
+            lines.append(line)
         lines.append("")
 
     if diagnoses:
