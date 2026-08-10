@@ -13,10 +13,12 @@ from app.models.health import (
 )
 from app.models.feishu import FeishuChannel
 from app.models.tasks import HealthTask
+from app.models.summaries import HealthSummary
 
 __all__ = [
     "FamilyMember",
     "HealthTask",
+    "HealthSummary",
     "MetricRecord",
     "Diagnosis",
     "Medication",

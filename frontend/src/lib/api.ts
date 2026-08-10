@@ -579,3 +579,32 @@ export const tasksApi = {
       body: JSON.stringify(data),
     }),
 }
+// ---- Health Summaries ----
+
+export interface HealthSummary {
+  id: number
+  member_id: number
+  summary_type: string
+  period: string
+  period_start: string
+  period_end: string
+  stats_json?: string | null
+  abnormal_events?: string | null
+  content: string
+  created_at: string
+}
+
+export const summariesApi = {
+  list: (memberId: number, period?: string) =>
+    request<HealthSummary[]>(
+      `/members/${memberId}/summaries${period ? `?period=${period}` : ''}`,
+    ),
+  latest: (memberId: number) =>
+    request<HealthSummary | null>(`/members/${memberId}/summaries/latest`),
+  generate: (memberId: number, period: string) =>
+    request<HealthSummary>(`/members/${memberId}/summaries/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ period }),
+    }),
+}
+
