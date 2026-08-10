@@ -129,8 +129,33 @@ def _event_item(m: MetricRecord) -> dict[str, Any]:
 
 
 def _build_events(metrics: list[MetricRecord]) -> dict[str, Any]:
-    abnormal = [_event_item(m) for m in metrics if m.is_abnormal]
-    critical = [_event_item(m) for m in metrics if m.is_critical]
+    """Group abnormal/critical events per metric.
+
+    - critical: a metric that was ever critical in the period is kept for continued
+      attention (even if it has since returned to normal), shown with its latest value.
+    - abnormal: only metrics whose LATEST record is still abnormal are reported
+      (historical/recovered abnormalities are not re-flagged). One row per metric.
+    """
+    by_name: dict[str, list[MetricRecord]] = {}
+    for m in metrics:
+        by_name.setdefault(m.metric_name, []).append(m)
+
+    abnormal: list[dict[str, Any]] = []
+    critical: list[dict[str, Any]] = []
+    for name, recs in by_name.items():
+        recs.sort(key=lambda r: r.measured_at)
+        last = recs[-1]
+        ever_critical = any(r.is_critical for r in recs)
+        if ever_critical:
+            item = _event_item(last)
+            item["had_critical"] = True  # was critical this period, needs continued attention
+            item["latest_critical"] = last.is_critical
+            critical.append(item)
+        elif last.is_abnormal:
+            item = _event_item(last)
+            item["had_critical"] = False
+            item["latest_critical"] = False
+            abnormal.append(item)
     return {"abnormal": abnormal, "critical": critical}
 
 
@@ -179,9 +204,12 @@ def _render_markdown(
         lines.append("")
 
     if events.get("critical"):
-        lines.append("## 危急指标（请尽快就医）")
+        lines.append("## 危急指标（请持续关注）")
         for e in events["critical"]:
-            line = f"- ⛔ {e['label']}：{e['value']} {e['unit']}（{e['date']}）"
+            title = f"⛔ {e['label']}"
+            if e.get("had_critical") and not e.get("latest_critical"):
+                title += "（曾危急，需持续关注）"
+            line = f"- {title}：{e['value']} {e['unit']}（最近 {e['date']}）"
             if e.get("context"):
                 line += f"（来源：{e['context']}）"
             lines.append(line)
@@ -189,7 +217,7 @@ def _render_markdown(
     if events.get("abnormal"):
         lines.append("## 异常指标（建议关注）")
         for e in events["abnormal"]:
-            line = f"- ⚠ {e['label']}：{e['value']} {e['unit']}（{e['date']}）"
+            line = f"- ⚠ {e['label']}：{e['value']} {e['unit']}（最近 {e['date']}）"
             if e.get("context"):
                 line += f"（来源：{e['context']}）"
             lines.append(line)

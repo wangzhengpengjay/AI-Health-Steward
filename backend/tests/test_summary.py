@@ -165,3 +165,30 @@ def test_generate_summary_commits():
     assert s.period_end is not None
     assert s.content == "md"
     assert db.add.called
+
+
+def test_events_aggregate_by_metric_latest_only():
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    metrics = [
+        # bmi: latest is normal -> should NOT appear in abnormal (historical abnormality not re-flagged)
+        _metric("bmi", 26.3, now, abnormal=True),
+        _metric("bmi", 24.0, now.replace(day=2), abnormal=False),
+        # fasting_glucose: latest still abnormal -> appears once
+        _metric("fasting_glucose", 7.5, now, abnormal=True, unit="mmol/L"),
+        _metric("fasting_glucose", 7.8, now.replace(day=2), abnormal=True, unit="mmol/L"),
+        # systolic: ever critical, latest normal -> stays in critical (continued attention)
+        _metric("systolic_blood_pressure", 200.0, now, critical=True, unit="mmHg"),
+        _metric("systolic_blood_pressure", 130.0, now.replace(day=2), unit="mmHg"),
+    ]
+    events = summary_service._build_events(metrics)
+    # abnormal: only fasting_glucose (latest abnormal), one row
+    abnormal_metrics = {e["metric"] for e in events["abnormal"]}
+    assert abnormal_metrics == {"fasting_glucose"}
+    assert len(events["abnormal"]) == 1
+    # critical: systolic kept for continued attention, latest no longer critical
+    crit = events["critical"]
+    assert len(crit) == 1 and crit[0]["metric"] == "systolic_blood_pressure"
+    assert crit[0]["had_critical"] is True and crit[0]["latest_critical"] is False
+    # bmi not reported at all
+    reported = abnormal_metrics | {e["metric"] for e in events["critical"]}
+    assert "bmi" not in reported
