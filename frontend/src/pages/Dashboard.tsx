@@ -84,6 +84,8 @@ export default function Dashboard() {
 
   const abnormals = allMetrics.filter((r) => r.is_abnormal && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'))
   const abnormalMetrics = [...new Set(abnormals.map((r) => r.metric_name))]
+  // P1-2: 危急值（需立即就医）
+  const criticalMetrics = allMetrics.filter((r) => r.is_critical && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'))
 
   const age = member.birth_date
     ? Math.floor((Date.now() - new Date(member.birth_date).getTime()) / 365.25 / 86400000)
@@ -107,6 +109,33 @@ export default function Dashboard() {
       </div>
 
       <div className="space-y-4 p-6">
+        {/* P1-2: 危急值红色预警 */}
+        {criticalMetrics.length > 0 && (
+          <div className="rounded-card border border-red-300 bg-red-50 p-5">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="material-symbols-rounded text-red-600">emergency</span>
+              <h2 className="text-sm font-bold text-red-700">危急值预警 — 请尽快就医</h2>
+            </div>
+            <p className="mb-3 text-xs text-red-600">
+              以下指标已超出危急范围，请尽快联系医生或前往医院处理。
+            </p>
+            <div className="space-y-1.5">
+              {criticalMetrics.map((r) => {
+                const meta = METRIC_LABELS[r.metric_name] || { label: r.metric_name, unit: r.unit || '' }
+                return (
+                  <div key={r.id} className="flex items-center justify-between rounded-field bg-white px-3 py-2 ring-1 ring-red-200">
+                    <span className="text-sm font-medium text-red-700">{meta.label}</span>
+                    <span className="text-sm font-bold text-red-700">
+                      {r.value} {meta.unit}
+                      <span className="ml-2 text-xs font-normal">{new Date(r.measured_at).toLocaleDateString()}</span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Basic info */}
         <div className="rounded-card border border-slate-200 bg-white p-5">
           <div className="mb-3 flex items-center gap-2">

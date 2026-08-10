@@ -1,5 +1,5 @@
 """Unit tests for age-aware reference ranges (P0-2 / P1-3)."""
-from app.core.reference_ranges import resolve_reference_range
+from app.core.reference_ranges import is_critical_value, resolve_reference_range
 
 
 class TestResolveReferenceRange:
@@ -35,3 +35,26 @@ class TestResolveReferenceRange:
     def test_hdl_has_lower_bound_only(self) -> None:
         lo, hi = resolve_reference_range("hdl_cholesterol", 40)
         assert lo is not None and hi is None
+
+
+class TestCriticalValue:
+    def test_hypertensive_crisis_bp_flagged(self) -> None:
+        # 收缩压 >=180 视为危急
+        assert is_critical_value("systolic_blood_pressure", 190, 40) is True
+
+    def test_elevated_but_not_critical_bp(self) -> None:
+        # 150 只是异常（>=140），不算危急（<180）
+        assert is_critical_value("systolic_blood_pressure", 150, 40) is False
+
+    def test_hyperglycemia_crisis(self) -> None:
+        assert is_critical_value("fasting_glucose", 20, 40) is True
+        assert is_critical_value("fasting_glucose", 8, 40) is False
+
+    def test_hypoglycemia_crisis(self) -> None:
+        assert is_critical_value("fasting_glucose", 2.0, 40) is True
+
+    def test_tachycardia(self) -> None:
+        assert is_critical_value("heart_rate", 140, 40) is True
+
+    def test_unknown_metric_falls_back_false(self) -> None:
+        assert is_critical_value("some_metric", 5, 40) is False

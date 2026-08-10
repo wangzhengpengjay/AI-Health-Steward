@@ -34,6 +34,44 @@ ADULT_RANGES: dict[str, Range] = {
     "hdl_cholesterol": Range(1.0, None),         # mmol/L (仅下限)
 }
 
+# 危急值阈值（P1-2）：用于把「异常」进一步区分为需立即就医的「危急」。
+# 采用权威指南常用危急值，取代原先“<下限*0.5 或 >上限*1.5”的相对启发式，
+# 更贴近临床（例如高血压危急值 180/110，而非 140*1.5=210）。
+# metric_name -> (critical_lower, critical_upper)，None 表示不适用该侧。
+CRITICAL_THRESHOLDS: dict[str, tuple[float | None, float | None]] = {
+    "systolic_blood_pressure": (None, 180),   # >=180 高血压急症
+    "diastolic_blood_pressure": (None, 110),  # >=110 重度
+    "fasting_glucose": (2.8, 16.7),           # <2.8 低血糖危象; >=16.7 高血糖危象
+    "postmeal_glucose": (None, 16.7),
+    "heart_rate": (40, 130),                  # <40 心动过缓; >130 心动过速
+}
+
+
+def is_critical_value(
+    metric_name: str, value: float, age: int | None
+) -> bool:
+    """Return True if a metric value is clinically critical (needs urgent care).
+
+    Falls back to the older relative heuristic for metrics without a defined
+    critical threshold.
+    """
+    thr = CRITICAL_THRESHOLDS.get(metric_name)
+    if thr:
+        c_lo, c_hi = thr
+        if c_lo is not None and value < c_lo:
+            return True
+        if c_hi is not None and value > c_hi:
+            return True
+        return False
+
+    # 无明确危急值定义时，退回相对启发式（与 schemas.health 保持一致）
+    lo, hi = resolve_reference_range(metric_name, age)
+    if lo is None or hi is None:
+        return False
+    is_abn = not (lo <= value <= hi)
+    return bool(is_abn and (value < lo * 0.5 or value > hi * 1.5))
+
+
 # 儿童参考范围（<18 岁），血压/血糖/心率与成人不同
 CHILD_RANGES: dict[str, Range] = {
     # 儿童收缩压约 100-120（随年龄增长），舒张压 60-80

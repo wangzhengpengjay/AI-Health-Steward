@@ -30,12 +30,19 @@ async def create_metric(
     data = payload.model_dump()
     data["source_type"] = "manual"
 
-    # P0-2: 调用方未提供参考范围时，按成员年龄自动填充成人/儿童默认值
+    metric_name = data.get("metric_name", "")
+    value = data.get("value")
+    age = _age(member.birth_date)
+
+    # P0-2/P1-2: 未显式提供参考范围时按年龄填充，并用临床危急值阈值计算异常/危急
     if data.get("reference_lower") is None and data.get("reference_upper") is None:
-        from app.core.reference_ranges import resolve_reference_range
-        lo, hi = resolve_reference_range(data.get("metric_name", ""), _age(member.birth_date))
+        from app.core.reference_ranges import is_critical_value, resolve_reference_range
+        lo, hi = resolve_reference_range(metric_name, age)
         data["reference_lower"] = lo
         data["reference_upper"] = hi
+        if lo is not None and hi is not None and value is not None:
+            data["is_abnormal"] = not (lo <= value <= hi)
+            data["is_critical"] = is_critical_value(metric_name, float(value), age)
 
     metric = MetricRecord(member_id=member_id, **data)
     db.add(metric)

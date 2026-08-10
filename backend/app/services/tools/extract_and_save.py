@@ -83,7 +83,7 @@ class ExtractAndSaveTool(HealthTool):
         measured_at = self._parse_datetime(measured_at_str) if measured_at_str else datetime.now(timezone.utc)
 
         # P0-2: 按成员年龄自动填充默认参考范围并计算异常/危急
-        from app.core.reference_ranges import resolve_reference_range
+        from app.core.reference_ranges import is_critical_value, resolve_reference_range
         member = await db.get(FamilyMember, member_id)
         age = _age(member.birth_date) if member else None
         ref_lo, ref_hi = resolve_reference_range(metric_name, age)
@@ -92,9 +92,7 @@ class ExtractAndSaveTool(HealthTool):
         is_critical = False
         if ref_lo is not None and ref_hi is not None:
             is_abnormal = not (ref_lo <= value_f <= ref_hi)
-            is_critical = bool(
-                is_abnormal and (value_f < ref_lo * 0.5 or value_f > ref_hi * 1.5)
-            )
+            is_critical = is_critical_value(metric_name, value_f, age)
 
         record = MetricRecord(
             member_id=member_id,
