@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -52,6 +52,10 @@ class FamilyMember(Base):
     )
     is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Long-term conversation memory (P1-4): rolling summary of prior consultations
+    memory_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    memory_summary_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # relationships
     metrics: Mapped[list["MetricRecord"]] = relationship(  # noqa: F821

@@ -145,7 +145,7 @@ class ConsultationService:
         source: str = "webui",
     ) -> tuple[str, list[dict[str, Any]], str]:
         has_vision = image_data_url is not None
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = await self._build_system_prompt(member_id, source)
 
         if conversation_history is None:
             conversation_history = await self._load_recent_history(member_id, source)
@@ -154,7 +154,7 @@ class ConsultationService:
         if has_vision:
             report_data = await self._create_report_record(member_id, image_data_url)
             extracted_text = report_data.get("extraction_json", "")
-            system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
+            system_prompt = system_prompt + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
             provider = self.router.get_text_provider()
         else:
             provider = self.router.get_text_provider()
@@ -174,6 +174,7 @@ class ConsultationService:
                 reply = response.content or ""
                 risk_level = self._assess_risk(user_message, reply)
                 await self._save_message(member_id, "assistant", reply, source)
+                await self._after_turn(member_id, source)
                 return reply, tool_call_records, risk_level
 
             tool_calls_oi = [
@@ -191,6 +192,7 @@ class ConsultationService:
         reply = response.content or ""
         risk_level = self._assess_risk(user_message, reply)
         await self._save_message(member_id, "assistant", reply, source)
+        await self._after_turn(member_id, source)
         return reply, tool_call_records, risk_level
 
     async def chat_stream(
@@ -206,7 +208,7 @@ class ConsultationService:
         event_type: "delta" (text chunk) or "report" (report record JSON).
         """
         has_vision = image_data_url is not None
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = await self._build_system_prompt(member_id, source)
 
         if conversation_history is None:
             conversation_history = await self._load_recent_history(member_id, source)
@@ -217,7 +219,7 @@ class ConsultationService:
             report_data = await self._create_report_record(member_id, image_data_url)
             extracted_text = report_data.get("extraction_json", "")
             logger.info("Image extraction done, length=%d, starting text chat stream", len(extracted_text))
-            system_prompt = SYSTEM_PROMPT + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
+            system_prompt = system_prompt + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
             provider = self.router.get_text_provider()
         else:
             provider = self.router.get_text_provider()
@@ -242,6 +244,7 @@ class ConsultationService:
                     full_reply.append(delta)
                     yield ("delta", delta)
                 await self._save_message(member_id, "assistant", "".join(full_reply), source)
+                await self._after_turn(member_id, source)
                 return
 
             tool_calls_oi = [
@@ -259,10 +262,35 @@ class ConsultationService:
             full_reply.append(delta)
             yield ("delta", delta)
         await self._save_message(member_id, "assistant", "".join(full_reply), source)
+        await self._after_turn(member_id, source)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _build_system_prompt(self, member_id: int, source: str = "webui") -> str:
+        """Build the system prompt, injecting long-term memory if present (P1-4)."""
+        from app.services.member_memory import get_memory_summary
+
+        prompt = SYSTEM_PROMPT
+        memory = await get_memory_summary(self.db, member_id)
+        if memory:
+            prompt += (
+                "\n\n[长期记忆 — 这是该成员此前的健康咨询要点，供你参考，帮助记住TA的病情、"
+                "用药、偏好与待跟进事项。若与本次问题无关可忽略，但不要与已有数据矛盾：]\n"
+                + memory
+            )
+        return prompt
+
+    async def _after_turn(self, member_id: int, source: str = "webui") -> None:
+        """Post-turn hook: compact recent messages into long-term memory (P1-4)."""
+        try:
+            from app.services.member_memory import maybe_compact_memory
+
+            await maybe_compact_memory(self.db, self.router, member_id, source)
+            await self.db.flush()
+        except Exception:  # noqa: BLE001
+            logger.exception("Post-turn memory compaction raised for member %s", member_id)
 
     async def _create_report_record(self, member_id: int, image_data_url: str) -> dict:
         """Create a ReportRecord, run single multimodal extraction, persist, and return dict.
@@ -321,12 +349,14 @@ class ConsultationService:
         prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
         multimodal = self.router.get_multimodal_provider()
+        from app.services.image_utils import prepare_for_multimodal
+        data_urls = prepare_for_multimodal(file_content, mime)
+        user_content: list[dict] = [{"type": "text", "text": "请解析这份健康报告并提取结构化数据"}]
+        for url in data_urls:
+            user_content.append({"type": "image_url", "image_url": {"url": url}})
         messages = [
             Message(role="system", content=prompt),
-            Message(role="user", content=[
-                {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
-                {"type": "image_url", "image_url": {"url": image_data_url}},
-            ]),
+            Message(role="user", content=user_content),
         ]
 
         import asyncio
