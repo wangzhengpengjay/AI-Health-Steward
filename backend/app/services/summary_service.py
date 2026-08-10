@@ -397,22 +397,36 @@ async def _model_recheck_suggestions(
 
     # Metrics already updated inside this period are covered by the trend section.
     updated = {t.get("metric") for t in stats.get("trends", [])}
-    not_updated = [m for n, m in latest_metrics.items() if n not in updated]
-    if not not_updated:
+    # Group not-updated metrics by check-category using REAL metric names (data layer),
+    # so model shorthand like "HDL-C" cannot break categorization.
+    cat_groups: dict[str, list[dict[str, Any]]] = {}
+    for name, m in latest_metrics.items():
+        if name in updated:
+            continue
+        cat = _metric_to_check_category(name)
+        val = m.get("text_value") if m.get("text_value") is not None else m.get("value")
+        cat_groups.setdefault(cat, []).append({
+            "指标": m.get("label") or name,
+            "上次值": f"{val} {m.get('unit','')}".strip(),
+            "是否异常": m.get("is_abnormal"),
+            "是否危急": m.get("is_critical"),
+            "日期": (m.get("measured_at") or "")[:10],
+        })
+    if not cat_groups:
         return "本期所有指标均已更新，暂无需要复查的项目。", []
 
     system = (
-        "你是家庭健康管家。根据以下" + f"{_PERIOD_LABELS.get(period, period)}健康小结\"的指标最近记录\"，"
-        "结合你的医学知识判断：哪些指标距上次检查过久、或上次结果异常，应当安排复查。"
-        "只考虑\"本期未更新\"的指标。每个指标给出复查建议。"
-        "严格只输出 JSON 数组，不要任何其他文字，例如："
-        "[{\"指标\":\"甘油三酯\",\"上次值\":\"2.05 mmol/L\",\"建议\":\"建议1个月内复查\",\"理由\":\"上次异常且超过半年未复查\"}]"
+        "你是家庭健康管家。以下是小结周期内\"未更新\"的指标，已按检查大类分组。"
+        "结合医学知识判断：每个检查大类是否应当安排复查（距上次过久或上次结果异常需关注）。"
+        "只输出需要复查的大类。"
+        "严格只输出 JSON 数组，不要任何其他文字，字段为 指标/建议/理由，例如："
+        "[{\"指标\":\"血脂四项\",\"建议\":\"建议1个月内复查\",\"理由\":\"甘油三酯/HDL异常，且超过半年未复查\"}]"
     )
     user_prompt = (
         f"本期起止：{period_start.isoformat()} 起\n"
         f"本期已更新指标：{sorted(updated)}\n"
-        f"未更新指标最近记录：{json.dumps(not_updated, ensure_ascii=False)}\n"
-        f"若某指标暂不需复查，不要输出该指标。"
+        f"未更新指标（按检查大类分组）：{json.dumps(cat_groups, ensure_ascii=False)}\n"
+        f"若某大类暂不需复查，不要输出该大类。"
     )
     try:
         resp = await provider.chat(
@@ -425,7 +439,7 @@ async def _model_recheck_suggestions(
         logger.exception("model recheck suggestion failed")
         text = ""
 
-    items = _parse_recheck_json(text, not_updated)
+    items = _parse_recheck_json(text, list(cat_groups.keys()))
     if not items:
         return "本期暂无需要复查的指标。", []
     lines = [f"- ⏰ {i['指标']}：{i['建议']}（{i['理由']}）" for i in items]
@@ -476,6 +490,44 @@ def _recheck_due(suggestion: str) -> tuple[int, str]:
     return 30, "normal"
 
 
+# 检查大类 → 关键词命中规则（顺序即优先级，前缀/类别名优先）
+# 命中任一词即归入该大类。血脂类优先于“基础指标”，且血脂关键词要先于“生化”兜底。
+_CHECK_CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("血常规", ("血常规",)),
+    ("尿常规", ("尿常规",)),
+    ("肿瘤标志物", ("肿瘤标志物",)),
+    ("血脂四项", ("甘油三酯", "胆固醇", "低密度脂蛋白", "高密度脂蛋白", "极低密度脂蛋白", "血脂", "triglyceride", "cholesterol", "lipoprotein")),
+    ("肝功能", ("丙氨酸氨基转移酶", "天门冬氨酸氨基转移酶", "转氨酶", "胆红素", "白蛋白", "球蛋白")),
+    ("肾功能", ("肌酐", "尿素", "尿酸", "肾小球滤过率")),
+    ("血糖", ("fasting_glucose", "postmeal_glucose", "葡萄糖", "血糖")),
+    ("甲状腺超声", ("甲状腺",)),
+    ("胸部CT", ("肺", "胸部", "胸廓", "胸片")),
+    ("血压", ("systolic_blood_pressure", "diastolic_blood_pressure", "血压")),
+]
+
+# 日常可自测/基础指标：归类为“基础指标”复查
+_BASIC_METRICS: set[str] = {"bmi", "weight", "身高", "体重", "BMI", "心率", "heart_rate", "体温", "temperature"}
+
+
+def _metric_to_check_category(metric_name: str) -> str:
+    """Map a metric_name to a check-category for grouped recheck to-dos.
+
+    Handles standard names, `lab:套餐:指标`, and `exam:类别:描述` formats.
+    """
+    if not metric_name:
+        return "其他"
+    name = metric_name
+    # 剥离前缀以匹配类别名/关键词（保留套餐名：lab:血常规:血小板 → 血常规）
+    body = name.split(":", 1)[-1] if ":" in name else name
+    for category, kws in _CHECK_CATEGORY_KEYWORDS:
+        if any(k.lower() in body.lower() for k in kws):
+            return category
+    if name in _BASIC_METRICS or body in _BASIC_METRICS:
+        return "基础指标"
+    return "其他"
+
+
+
 async def _sync_recheck_tasks(
     db: AsyncSession, member_id: int, items: list[dict[str, str]]
 ) -> int:
@@ -487,16 +539,33 @@ async def _sync_recheck_tasks(
     from app.models.tasks import HealthTask
     from app.services import task_service
 
-    created = updated = 0
+    # Group items by check-category so each category becomes ONE to-do.
+    groups: dict[str, list[dict[str, str]]] = {}
     for it in items:
         metric = it.get("指标", "").strip()
         if not metric:
             continue
-        days, priority = _recheck_due(it.get("建议", ""))
+        mapped = _metric_to_check_category(metric)
+        # 模型已按大类输出，通常可直接使用；若落到“其他”则保留模型给的大类名
+        cat = mapped if mapped != "其他" else metric
+        groups.setdefault(cat, []).append(it)
+
+    # priority rank for picking the most urgent due among a group
+    _PRIO_RANK = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+    created = updated = 0
+    for cat, grp in groups.items():
+        # most urgent = min days; tie-break by higher priority
+        best = min(grp, key=lambda it: (_recheck_due(it.get("建议", ""))[0], _PRIO_RANK.get(_recheck_due(it.get("建议", ""))[1], 2)))
+        days, priority = _recheck_due(best.get("建议", ""))
         due = date.today() + timedelta(days=days) if days > 0 else date.today()
-        title = f"复查{metric}"
-        description = it.get("理由") or it.get("建议", "建议复查")
-        source_ref = f"recheck:{metric}"
+        title = f"复查{cat}"
+        detail_lines = []
+        for it in grp:
+            m = it.get("指标", "").strip()
+            reason = it.get("理由") or it.get("建议", "建议复查")
+            detail_lines.append(f"{m}：{reason}")
+        description = "；".join(detail_lines)
+        source_ref = f"recheck:{cat}"
 
         existing = (await db.execute(
             select(HealthTask).where(

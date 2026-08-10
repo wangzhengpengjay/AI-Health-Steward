@@ -318,7 +318,34 @@ async def test_sync_recheck_tasks_updates_existing():
 
     items = [{"指标": "甘油三酯", "建议": "建议3个月内复查", "理由": "偏高"}]
     n = await summary_service._sync_recheck_tasks(db, 6, items)
-    # existing updated, not re-created
+    # existing updated, not re-created; grouped description includes metric detail
     assert n == 0
     assert existing.due_date == date.today() + timedelta(days=90)
-    assert existing.description == "偏高"
+    assert existing.description == "甘油三酯：偏高"
+
+
+def test_metric_to_check_category_groups():
+    from app.services.summary_service import _metric_to_check_category
+
+    # 血脂类（标准指标 + lab 套餐内血脂项）
+    assert _metric_to_check_category("triglycerides") == "血脂四项"
+    assert _metric_to_check_category("hdl_cholesterol") == "血脂四项"
+    assert _metric_to_check_category("lab:生化全套:甘油三酯") == "血脂四项"
+    assert _metric_to_check_category("lab:生化全套:高密度脂蛋白胆固醇") == "血脂四项"
+    # 血常规 / 尿常规 / 肿瘤标志物（前缀匹配）
+    assert _metric_to_check_category("lab:血常规:血小板压积") == "血常规"
+    assert _metric_to_check_category("lab:尿常规:蛋白质") == "尿常规"
+    assert _metric_to_check_category("lab:肿瘤标志物:甲胎蛋白") == "肿瘤标志物"
+    # 肝 / 肾功能、血糖
+    assert _metric_to_check_category("lab:生化全套:丙氨酸氨基转移酶") == "肝功能"
+    assert _metric_to_check_category("lab:生化全套:肌酐") == "肾功能"
+    assert _metric_to_check_category("fasting_glucose") == "血糖"
+    # 影像（exam）
+    assert _metric_to_check_category("exam:甲状腺囊肿:双侧甲状腺...") == "甲状腺超声"
+    assert _metric_to_check_category("exam:肺结节:右肺...") == "胸部CT"
+    assert _metric_to_check_category("exam:肺纹理增多:两肺...") == "胸部CT"
+    # 基础 / 其他
+    assert _metric_to_check_category("bmi") == "基础指标"
+    assert _metric_to_check_category("weight") == "基础指标"
+    assert _metric_to_check_category("systolic_blood_pressure") == "血压"
+    assert _metric_to_check_category("未知指标xyz") == "其他"
