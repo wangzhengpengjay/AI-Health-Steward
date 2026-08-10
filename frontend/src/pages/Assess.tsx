@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { scalesApi, type ScaleDetail } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
@@ -15,17 +16,18 @@ const RISK_STYLE: Record<string, string> = {
 }
 
 function ScaleCard({ detail, memberId }: { detail: ScaleDetail; memberId: number }) {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [answers, setAnswers] = useState<Record<string, number>>({})
-  const [result, setResult] = useState<null | { score: number; label: string; level: string; advice: string }>(null)
   const [open, setOpen] = useState(false)
 
   const submitMutation = useMutation({
     mutationFn: () => scalesApi.submit(memberId, detail.code, answers),
     onSuccess: (r) => {
-      setResult({ score: r.total_score, label: r.risk_label ?? '', level: r.risk_level, advice: r.advice ?? '' })
       queryClient.invalidateQueries({ queryKey: ['scales', memberId] })
       queryClient.invalidateQueries({ queryKey: ['scale-results', memberId] })
+      // 提交成功后跳转到完整结果页
+      navigate(`/assess/result/${r.id}`)
     },
   })
 
@@ -93,18 +95,6 @@ function ScaleCard({ detail, memberId }: { detail: ScaleDetail; memberId: number
                 : `请完成剩余 ${detail.questions.length - answeredCount} 题`}
           </button>
 
-          {result && (
-            <div className={`rounded-field border p-4 ${RISK_STYLE[result.level] ?? 'bg-slate-50'}`}>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold">{result.score} 分</span>
-                <span className="rounded-full border px-2 py-0.5 text-xs font-medium">
-                  {result.label}
-                </span>
-              </div>
-              <p className="mt-2 text-sm">{result.advice}</p>
-              <p className="mt-2 text-xs text-slate-500">{detail.caveat}</p>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -112,6 +102,7 @@ function ScaleCard({ detail, memberId }: { detail: ScaleDetail; memberId: number
 }
 
 function ResultHistory({ memberId }: { memberId: number }) {
+  const navigate = useNavigate()
   const { data: results = [] } = useQuery({
     queryKey: ['scale-results', memberId],
     queryFn: () => scalesApi.results(memberId),
@@ -120,13 +111,20 @@ function ResultHistory({ memberId }: { memberId: number }) {
   if (results.length === 0) return null
   return (
     <div className="rounded-card border border-slate-200 bg-white p-5">
-      <h3 className="mb-3 text-sm font-medium text-slate-700">测评历史</h3>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-slate-700">测评历史</h3>
+        <span className="text-xs text-slate-400">点击查看完整结果</span>
+      </div>
       <div className="space-y-2">
         {results.map((r) => (
-          <div key={r.id} className="flex items-center justify-between rounded-field bg-slate-50 px-3 py-2 text-sm">
+          <button
+            key={r.id}
+            onClick={() => navigate(`/assess/result/${r.id}`)}
+            className="flex w-full items-center justify-between rounded-field bg-slate-50 px-3 py-2 text-sm transition-colors hover:bg-slate-100"
+          >
             <div>
               <span className="font-medium text-slate-700">
-                {r.scale_code.toUpperCase()}
+                {r.scale_name ?? r.scale_code.toUpperCase()}
               </span>
               <span className="ml-2 text-slate-500">{new Date(r.created_at).toLocaleDateString()}</span>
             </div>
@@ -136,7 +134,7 @@ function ResultHistory({ memberId }: { memberId: number }) {
                 {r.risk_label}
               </span>
             </div>
-          </div>
+          </button>
         ))}
       </div>
     </div>

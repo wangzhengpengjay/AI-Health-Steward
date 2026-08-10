@@ -611,18 +611,29 @@ export interface ScaleMeta {
   reason?: string | null
 }
 
+export interface ScaleThreshold {
+  min: number
+  max: number
+  level: string
+  label: string
+  advice: string
+}
+
 export interface ScaleDetail extends ScaleMeta {
   questions: ScaleQuestion[]
   scoring: string
+  thresholds?: ScaleThreshold[]
 }
 
 export interface ScaleResult {
   id: number
   member_id: number
   scale_code: string
+  scale_name?: string | null
   total_score: number
   risk_level: string
   risk_label?: string | null
+  answers?: string | null
   advice?: string | null
   interpretation?: string | null
   created_at: string

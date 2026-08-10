@@ -43,14 +43,25 @@ class ScaleResultOut(BaseModel):
     id: int
     member_id: int
     scale_code: str
+    scale_name: Optional[str] = None
     total_score: float
     risk_level: str
     risk_label: Optional[str]
+    answers: Optional[str] = None
     advice: Optional[str]
     interpretation: Optional[str]
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+def _result_out(r: ScaleResult) -> ScaleResultOut:
+    """Build ScaleResultOut with derived scale_name for the result page."""
+    scale = get_scale(r.scale_code)
+    out = ScaleResultOut.model_validate(r)
+    if scale is not None:
+        out.scale_name = scale.name
+    return out
 
 
 async def _ensure_member(db: AsyncSession, member_id: int) -> None:
@@ -109,6 +120,16 @@ async def list_scales(db: AsyncSession = Depends(get_db), member_id: Optional[in
     return out
 
 
+@router.get("/members/{member_id}/scales/results", response_model=list[ScaleResultOut])
+async def list_results(member_id: int, db: AsyncSession = Depends(get_db)):
+    await _ensure_member(db, member_id)
+    result = await db.execute(
+        select(ScaleResult)
+        .where(ScaleResult.member_id == member_id)
+        .order_by(ScaleResult.created_at.desc())
+    )
+    return [_result_out(r) for r in result.scalars().all()]
+
 @router.get("/members/{member_id}/scales/{code}", response_model=dict)
 async def get_scale_questions(
     member_id: int,
@@ -127,6 +148,7 @@ async def get_scale_questions(
         "description": scale.description,
         "questions": scale.questions,
         "scoring": scale.scoring,
+        "thresholds": scale.thresholds,
         "caveat": scale.caveat,
         "should_push": should_push,
         "reason": reason,
@@ -170,15 +192,6 @@ async def submit_scale(
     await db.refresh(result)
     await db.commit()
     await db.refresh(result)
-    return ScaleResultOut.model_validate(result)
+    return _result_out(result)
 
 
-@router.get("/members/{member_id}/scales/results", response_model=list[ScaleResultOut])
-async def list_results(member_id: int, db: AsyncSession = Depends(get_db)):
-    await _ensure_member(db, member_id)
-    result = await db.execute(
-        select(ScaleResult)
-        .where(ScaleResult.member_id == member_id)
-        .order_by(ScaleResult.created_at.desc())
-    )
-    return [ScaleResultOut.model_validate(r) for r in result.scalars().all()]

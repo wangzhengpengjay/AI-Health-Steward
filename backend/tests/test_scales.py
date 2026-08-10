@@ -119,3 +119,19 @@ def test_should_push_frequency_control():
     recent_high_old = type("R", (), {"risk_level": "high", "created_at": now - timedelta(days=30)})()
     push, _ = _should_push(recent_high_old)
     assert push is True
+
+
+def test_result_out_has_scale_name_and_answers():
+    from app.api.routes.scales import _result_out
+    from app.models.assessments import ScaleResult
+
+    from datetime import datetime, timezone
+    r = ScaleResult(
+        id=99, member_id=6, scale_code="phq9",
+        answers='{"phq1": 2.0, "phq2": 1.0}', total_score=3.0,
+        risk_level="none", risk_label="无明显抑郁",
+        created_at=datetime.now(timezone.utc),
+    )
+    out = _result_out(r)
+    assert out.scale_name == "抑郁自评量表（PHQ-9）"
+    assert '"phq1"' in out.answers
