@@ -192,3 +192,49 @@ def test_events_aggregate_by_metric_latest_only():
     # bmi not reported at all
     reported = abnormal_metrics | {e["metric"] for e in events["critical"]}
     assert "bmi" not in reported
+
+
+def test_parse_recheck_json_valid():
+    from app.services.summary_service import _parse_recheck_json
+
+    text = '[{"指标":"甘油三酯","建议":"建议1个月内复查","理由":"上次异常"}]'
+    items = _parse_recheck_json(text, [])
+    assert len(items) == 1 and items[0]["指标"] == "甘油三酯"
+
+
+def test_parse_recheck_json_embedded_and_invalid():
+    from app.services.summary_service import _parse_recheck_json
+
+    embedded = '好的，结果如下：[{"指标":"谷丙转氨酶","建议":"建议复查","理由":"偏高"}] 以上就是。'
+    items = _parse_recheck_json(embedded, [])
+    assert len(items) == 1 and items[0]["指标"] == "谷丙转氨酶"
+    assert _parse_recheck_json("", []) == []
+    assert _parse_recheck_json("无法解析", []) == []
+
+
+@pytest.mark.asyncio
+async def test_load_latest_metrics_takes_newest_per_metric():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.summary_service import _load_latest_metrics
+
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    older = datetime(2025, 7, 26, tzinfo=timezone.utc)
+    # mock returns rows in the same order SQL's order_by(measured_at.desc()) would
+    recs = [
+        _metric("triglycerides", 1.5, now, abnormal=False, unit="mmol/L"),
+        _metric("triglycerides", 2.05, older, abnormal=True, unit="mmol/L"),
+        _metric("heart_rate", 70.0, now, unit="bpm"),
+    ]
+    scalars_result = MagicMock()
+    scalars_result.all.return_value = recs
+    result_obj = MagicMock()
+    result_obj.scalars.return_value = scalars_result
+    db = AsyncMock()
+    db.execute.return_value = result_obj
+
+    latest = await _load_latest_metrics(db, 6)
+    assert latest["triglycerides"]["value"] == 1.5
+    assert latest["triglycerides"]["is_abnormal"] is False
+    assert latest["heart_rate"]["value"] == 70.0
+    assert len(latest) == 2

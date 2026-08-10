@@ -55,6 +55,34 @@ async def _load_metrics(db: AsyncSession, member_id: int, start: date, end: date
     return list(result.scalars().all())
 
 
+async def _load_latest_metrics(db: AsyncSession, member_id: int) -> dict[str, dict[str, Any]]:
+    """Load each metric's global most-recent record (any time), for recheck judgment.
+
+    Returns {metric_name: {value, text_value, unit, is_abnormal, is_critical,
+    measured_at, context}} — the latest row per metric across all time.
+    """
+    result = await db.execute(
+        select(MetricRecord).where(MetricRecord.member_id == member_id)
+        .order_by(MetricRecord.measured_at.desc())
+    )
+    latest: dict[str, dict[str, Any]] = {}
+    for m in result.scalars().all():
+        if m.metric_name in latest:
+            continue
+        latest[m.metric_name] = {
+            "metric": m.metric_name,
+            "label": _metric_label(m.metric_name),
+            "value": m.value,
+            "text_value": m.text_value,
+            "unit": m.unit or "",
+            "is_abnormal": m.is_abnormal,
+            "is_critical": m.is_critical,
+            "measured_at": m.measured_at.isoformat() if m.measured_at else None,
+            "context": m.context or "",
+        }
+    return latest
+
+
 async def _load_profile_events(
     db: AsyncSession, member_id: int, start: date, end: date
 ) -> tuple[list[Diagnosis], list[Medication]]:
@@ -268,6 +296,7 @@ async def generate_summary(
         period_start = today - timedelta(days=_PERIOD_DAYS[period])
 
     metrics = await _load_metrics(db, member_id, period_start, period_end)
+    latest_metrics = await _load_latest_metrics(db, member_id)
     diagnoses, medications = await _load_profile_events(db, member_id, period_start, period_end)
 
     stats = _build_stats(metrics)
@@ -276,7 +305,7 @@ async def generate_summary(
 
     # Optional LLM enrichment — best-effort, never blocks generation.
     try:
-        content = await _maybe_enrich(period, content, stats, events)
+        content = await _maybe_enrich(period, content, stats, events, latest_metrics, period_start)
     except Exception:  # noqa: BLE001
         logger.exception("LLM summary enrichment failed, using rule-based copy")
 
@@ -301,8 +330,10 @@ async def _maybe_enrich(
     rule_content: str,
     stats: dict[str, Any],
     events: dict[str, Any],
+    latest_metrics: dict[str, dict[str, Any]] | None = None,
+    period_start: date | None = None,
 ) -> str:
-    """Optionally ask an LLM to add a natural-language interpretation."""
+    """Optionally ask an LLM to judge rechecks and add a natural-language interpretation."""
     from app.providers.router import ModelRouter
     from app.providers.base import Message
 
@@ -311,6 +342,10 @@ async def _maybe_enrich(
     if provider is None or not provider.is_configured:
         return rule_content
 
+    # 1) Model judges which not-yet-rechecked metrics need a recheck this period.
+    recheck_md = await _model_recheck_suggestions(provider, period, stats, events, latest_metrics, period_start)
+
+    # 2) Optional natural-language interpretation.
     system = "你是一名家庭健康管家。请基于给定的结构化数据，写一段简洁、温和、实用的健康小结中文解读。保持客观，不做诊断。可用 Markdown 小标题。"
     user_prompt = (
         f"周期类型：{_PERIOD_LABELS.get(period, period)}\n"
@@ -324,7 +359,76 @@ async def _maybe_enrich(
         temperature=0.4,
         max_tokens=800,
     )
+    parts = [rule_content]
+    if recheck_md:
+        parts.append("\n## 建议复查\n" + recheck_md)
     if resp and getattr(resp, "content", None):
-        llm_part = resp.content.strip()
-        return rule_content + "\n\n## AI 解读\n" + llm_part
-    return rule_content
+        parts.append("\n## AI 解读\n" + resp.content.strip())
+    return "\n".join(parts)
+
+
+async def _model_recheck_suggestions(
+    provider, period: str, stats: dict[str, Any], events: dict[str, Any],
+    latest_metrics: dict[str, dict[str, Any]], period_start: date,
+) -> str:
+    """Ask the model which metrics need a recheck. Falls back to a rule heuristic."""
+    from app.providers.base import Message
+
+    # Metrics already updated inside this period are covered by the trend section.
+    updated = {t.get("metric") for t in stats.get("trends", [])}
+    not_updated = [m for n, m in latest_metrics.items() if n not in updated]
+    if not not_updated:
+        return "本期所有指标均已更新，暂无需要复查的项目。"
+
+    system = (
+        "你是家庭健康管家。根据以下" + f"{_PERIOD_LABELS.get(period, period)}健康小结\"的指标最近记录\"，"
+        "结合你的医学知识判断：哪些指标距上次检查过久、或上次结果异常，应当安排复查。"
+        "只考虑\"本期未更新\"的指标。每个指标给出复查建议。"
+        "严格只输出 JSON 数组，不要任何其他文字，例如："
+        "[{\"指标\":\"甘油三酯\",\"上次值\":\"2.05 mmol/L\",\"建议\":\"建议1个月内复查\",\"理由\":\"上次异常且超过半年未复查\"}]"
+    )
+    user_prompt = (
+        f"本期起止：{period_start.isoformat()} 起\n"
+        f"本期已更新指标：{sorted(updated)}\n"
+        f"未更新指标最近记录：{json.dumps(not_updated, ensure_ascii=False)}\n"
+        f"若某指标暂不需复查，不要输出该指标。"
+    )
+    try:
+        resp = await provider.chat(
+            [Message(role="system", content=system), Message(role="user", content=user_prompt)],
+            temperature=0.2,
+            max_tokens=600,
+        )
+        text = resp.content.strip() if resp and getattr(resp, "content", None) else ""
+    except Exception:  # noqa: BLE001
+        logger.exception("model recheck suggestion failed")
+        text = ""
+
+    items = _parse_recheck_json(text, not_updated)
+    if not items:
+        return "本期暂无需要复查的指标。"
+    lines = [f"- ⏰ {i['指标']}：{i['建议']}（{i['理由']}）" for i in items]
+    return "\n".join(lines)
+
+
+def _parse_recheck_json(text: str, candidates: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Best-effort parse of the model's recheck JSON; falls back to empty."""
+    if not text:
+        return []
+    txt = text.strip()
+    arr = txt[txt.find("[") : txt.rfind("]") + 1] if "[" in txt and "]" in txt else txt
+    try:
+        data = json.loads(arr)
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(data, list):
+        return []
+    result = []
+    for d in data:
+        if isinstance(d, dict) and d.get("指标"):
+            result.append({
+                "指标": str(d.get("指标")),
+                "建议": str(d.get("建议", "建议复查")),
+                "理由": str(d.get("理由", "")),
+            })
+    return result
