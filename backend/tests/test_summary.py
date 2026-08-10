@@ -1,7 +1,7 @@
 """Tests for health summary service (rule-based stats + markdown rendering)."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -238,3 +238,87 @@ async def test_load_latest_metrics_takes_newest_per_metric():
     assert latest["triglycerides"]["is_abnormal"] is False
     assert latest["heart_rate"]["value"] == 70.0
     assert len(latest) == 2
+
+
+def test_recheck_due_mapping():
+    from app.services.summary_service import _recheck_due
+
+    # 尽快/立即 -> 当天 critical
+    days, prio = _recheck_due("建议尽快复查")
+    assert days == 0 and prio == "critical"
+    # 1个月内 -> 30 天
+    days, prio = _recheck_due("建议1个月内复查")
+    assert days == 30 and prio == "normal"
+    # 3个月 -> 90 天
+    days, prio = _recheck_due("建议3个月内复查")
+    assert days == 90
+    # 未匹配 -> 默认 30 天
+    days, prio = _recheck_due("请关注")
+    assert days == 30 and prio == "normal"
+
+
+@pytest.mark.asyncio
+async def test_sync_recheck_tasks_creates_new(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.models.tasks import HealthTask
+    from app.services import summary_service
+
+
+    created_rows: list[HealthTask] = []
+    db = AsyncMock()
+    # db.execute -> empty (no existing open task) so it should create
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute.return_value = result
+
+    from app.services import task_service as ts
+
+    async def fake_add_task(db_, member_id, task_type, title, description=None, due_date=None, priority="normal", source_ref=None, auto_generated=True):
+        t = HealthTask(
+            member_id=member_id, task_type=task_type, title=title,
+            description=description, priority=priority, due_date=due_date,
+            status="open", source_ref=source_ref, auto_generated=auto_generated,
+        )
+        created_rows.append(t)
+        return t
+
+    try:
+        orig = ts._add_task
+    except AttributeError:
+        orig = None
+    ts._add_task = fake_add_task
+    try:
+        items = [{"指标": "甘油三酯", "建议": "建议尽快复查", "理由": "上次异常"}]
+        n = await summary_service._sync_recheck_tasks(db, 6, items)
+        assert n == 1
+        assert created_rows[0].due_date == date.today()
+        assert created_rows[0].priority == "critical"
+    finally:
+        if orig is not None:
+            ts._add_task = orig
+
+
+@pytest.mark.asyncio
+async def test_sync_recheck_tasks_updates_existing():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.models.tasks import HealthTask
+    from app.services import summary_service
+
+    existing = HealthTask(
+        member_id=6, task_type="recheck", title="复查甘油三酯",
+        priority="normal", due_date=date(2026, 9, 9), status="open",
+        source_ref="recheck:甘油三酯", auto_generated=True,
+    )
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = existing
+    db.execute.return_value = result
+
+    items = [{"指标": "甘油三酯", "建议": "建议3个月内复查", "理由": "偏高"}]
+    n = await summary_service._sync_recheck_tasks(db, 6, items)
+    # existing updated, not re-created
+    assert n == 0
+    assert existing.due_date == date.today() + timedelta(days=90)
+    assert existing.description == "偏高"

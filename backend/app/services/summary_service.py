@@ -304,8 +304,12 @@ async def generate_summary(
     content = _render_markdown(period, period_start, period_end, stats, events, diagnoses, medications)
 
     # Optional LLM enrichment — best-effort, never blocks generation.
+    recheck_md = ""
     try:
-        content = await _maybe_enrich(period, content, stats, events, latest_metrics, period_start)
+        recheck_md, recheck_items = await _get_recheck_suggestions(period, stats, events, latest_metrics, period_start)
+        if recheck_items:
+            await _sync_recheck_tasks(db, member_id, recheck_items)
+        content = await _maybe_enrich(period, content, stats, events, recheck_md)
     except Exception:  # noqa: BLE001
         logger.exception("LLM summary enrichment failed, using rule-based copy")
 
@@ -325,15 +329,31 @@ async def generate_summary(
     return summary
 
 
+async def _get_recheck_suggestions(
+    period: str,
+    stats: dict[str, Any],
+    events: dict[str, Any],
+    latest_metrics: dict[str, dict[str, Any]],
+    period_start: date,
+) -> tuple[str, list[dict[str, str]]]:
+    """Get model-driven recheck suggestions; empty when no LLM is configured."""
+    from app.providers.router import ModelRouter
+
+    router = ModelRouter()
+    provider = router.get_text_provider()
+    if provider is None or not provider.is_configured:
+        return "", []
+    return await _model_recheck_suggestions(provider, period, stats, events, latest_metrics, period_start)
+
+
 async def _maybe_enrich(
     period: str,
     rule_content: str,
     stats: dict[str, Any],
     events: dict[str, Any],
-    latest_metrics: dict[str, dict[str, Any]] | None = None,
-    period_start: date | None = None,
+    recheck_md: str = "",
 ) -> str:
-    """Optionally ask an LLM to judge rechecks and add a natural-language interpretation."""
+    """Optionally ask an LLM to add a natural-language interpretation."""
     from app.providers.router import ModelRouter
     from app.providers.base import Message
 
@@ -342,10 +362,7 @@ async def _maybe_enrich(
     if provider is None or not provider.is_configured:
         return rule_content
 
-    # 1) Model judges which not-yet-rechecked metrics need a recheck this period.
-    recheck_md = await _model_recheck_suggestions(provider, period, stats, events, latest_metrics, period_start)
-
-    # 2) Optional natural-language interpretation.
+    # Optional natural-language interpretation.
     system = "你是一名家庭健康管家。请基于给定的结构化数据，写一段简洁、温和、实用的健康小结中文解读。保持客观，不做诊断。可用 Markdown 小标题。"
     user_prompt = (
         f"周期类型：{_PERIOD_LABELS.get(period, period)}\n"
@@ -370,15 +387,19 @@ async def _maybe_enrich(
 async def _model_recheck_suggestions(
     provider, period: str, stats: dict[str, Any], events: dict[str, Any],
     latest_metrics: dict[str, dict[str, Any]], period_start: date,
-) -> str:
-    """Ask the model which metrics need a recheck. Falls back to a rule heuristic."""
+) -> tuple[str, list[dict[str, str]]]:
+    """Ask the model which metrics need a recheck.
+
+    Returns (markdown_summary, structured_items). The structured items are
+    additionally persisted as health tasks so the plan-board can track them.
+    """
     from app.providers.base import Message
 
     # Metrics already updated inside this period are covered by the trend section.
     updated = {t.get("metric") for t in stats.get("trends", [])}
     not_updated = [m for n, m in latest_metrics.items() if n not in updated]
     if not not_updated:
-        return "本期所有指标均已更新，暂无需要复查的项目。"
+        return "本期所有指标均已更新，暂无需要复查的项目。", []
 
     system = (
         "你是家庭健康管家。根据以下" + f"{_PERIOD_LABELS.get(period, period)}健康小结\"的指标最近记录\"，"
@@ -406,9 +427,9 @@ async def _model_recheck_suggestions(
 
     items = _parse_recheck_json(text, not_updated)
     if not items:
-        return "本期暂无需要复查的指标。"
+        return "本期暂无需要复查的指标。", []
     lines = [f"- ⏰ {i['指标']}：{i['建议']}（{i['理由']}）" for i in items]
-    return "\n".join(lines)
+    return "\n".join(lines), items
 
 
 def _parse_recheck_json(text: str, candidates: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -432,3 +453,75 @@ def _parse_recheck_json(text: str, candidates: list[dict[str, Any]]) -> list[dic
                 "理由": str(d.get("理由", "")),
             })
     return result
+
+
+# 模型建议文案 → (复查天数, 优先级) 映射；默认 30 天复查
+_RECHECK_DUE_HINTS: list[tuple[tuple[str, ...], int, str]] = [
+    (("尽快", "立即", "马上", "现在就"), 0, "critical"),
+    (("1周", "一周", "短期内"), 7, "high"),
+    (("2周", "两周"), 14, "high"),
+    (("1个月", "一个月", "1月", "一月"), 30, "normal"),
+    (("2个月", "两个月", "1-2个月"), 60, "normal"),
+    (("3个月", "三个月", "3-6个月"), 90, "normal"),
+    (("半年", "6个月", "六个月"), 180, "normal"),
+    (("1年", "一年"), 365, "normal"),
+]
+
+
+def _recheck_due(suggestion: str) -> tuple[int, str]:
+    """Map a model's recheck suggestion to (days, priority); defaults to 30d/normal."""
+    for hints, days, priority in _RECHECK_DUE_HINTS:
+        if any(h in suggestion for h in hints):
+            return days, priority
+    return 30, "normal"
+
+
+async def _sync_recheck_tasks(
+    db: AsyncSession, member_id: int, items: list[dict[str, str]]
+) -> int:
+    """Persist model-judged recheck items as plan-board health tasks (deduped).
+
+    Uses task_service._add_task with a stable source_ref so re-running a summary
+    does not create duplicate open tasks for the same metric. Returns count created.
+    """
+    from app.models.tasks import HealthTask
+    from app.services import task_service
+
+    created = updated = 0
+    for it in items:
+        metric = it.get("指标", "").strip()
+        if not metric:
+            continue
+        days, priority = _recheck_due(it.get("建议", ""))
+        due = date.today() + timedelta(days=days) if days > 0 else date.today()
+        title = f"复查{metric}"
+        description = it.get("理由") or it.get("建议", "建议复查")
+        source_ref = f"recheck:{metric}"
+
+        existing = (await db.execute(
+            select(HealthTask).where(
+                HealthTask.member_id == member_id,
+                HealthTask.source_ref == source_ref,
+                HealthTask.status == "open",
+            )
+        )).scalars().first()
+        if existing is not None:
+            # 模型判断接管复查时间：校准已存在待办的到期日/优先级/说明
+            existing.due_date = due
+            existing.priority = priority
+            existing.description = description
+            updated += 1
+            continue
+
+        task = await task_service._add_task(
+            db, member_id, "recheck",
+            title=title,
+            description=description,
+            due_date=due,
+            priority=priority,
+            source_ref=source_ref,
+            auto_generated=True,
+        )
+        if task is not None:
+            created += 1
+    return created
