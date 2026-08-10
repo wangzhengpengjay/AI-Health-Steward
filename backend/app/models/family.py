@@ -61,3 +61,6 @@ class FamilyMember(Base):
     metrics: Mapped[list["MetricRecord"]] = relationship(  # noqa: F821
         back_populates="member", cascade="all, delete-orphan"
     )
+    tasks: Mapped[list["HealthTask"]] = relationship(  # noqa: F821
+        back_populates="member", cascade="all, delete-orphan"
+    )

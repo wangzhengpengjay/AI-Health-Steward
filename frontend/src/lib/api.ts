@@ -523,3 +523,59 @@ export const feishuApi = {
     request<{ deleted: boolean; id: number }>(`/feishu/channels/${id}`, { method: 'DELETE' }),
   reload: () => request<{ ok: boolean; connections: any[] }>('/feishu/reload', { method: 'POST' }),
 }
+
+// ---- Health Tasks ----
+
+export interface HealthTask {
+  id: number
+  member_id: number
+  task_type: string
+  title: string
+  description?: string | null
+  priority: string
+  due_date?: string | null
+  status: string
+  source_ref?: string | null
+  auto_generated: boolean
+  created_at: string
+  completed_at?: string | null
+  dismissed_at?: string | null
+}
+
+export interface TaskCreateInput {
+  task_type?: string
+  title: string
+  description?: string
+  priority?: string
+  due_date?: string
+}
+
+export interface TaskUpdateInput {
+  status?: string
+  title?: string
+  priority?: string
+  due_date?: string
+}
+
+export interface TaskOverviewRow {
+  member_id: number
+  open: number
+  overdue: number
+  critical: number
+}
+
+export const tasksApi = {
+  list: (memberId: number, status = 'open') =>
+    request<HealthTask[]>(`/members/${memberId}/tasks?status=${status}`),
+  overview: () => request<TaskOverviewRow[]>('/tasks/overview'),
+  create: (memberId: number, data: TaskCreateInput) =>
+    request<HealthTask>(`/members/${memberId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: TaskUpdateInput) =>
+    request<HealthTask>(`/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+}

@@ -152,6 +152,15 @@ async def add_diagnosis(member_id: int, payload: DiagnosisCreate, db: AsyncSessi
     db.add(obj)
     await db.flush()
     await db.refresh(obj)
+    # 功能①: 慢病 active 状态生成定期随访待办
+    try:
+        from app.services import task_service
+        await task_service.handle_diagnosis_added(
+            db, member_id, obj.disease_name, obj.id, obj.status,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("task gen failed for diagnosis %s", obj.id)
     return obj
 
 
@@ -162,6 +171,15 @@ async def add_medication(member_id: int, payload: MedicationCreate, db: AsyncSes
     db.add(obj)
     await db.flush()
     await db.refresh(obj)
+    # 功能①: 在用药（无 end_date）生成用药提醒待办
+    try:
+        from app.services import task_service
+        await task_service.handle_medication_added(
+            db, member_id, obj.drug_name, obj.id, obj.end_date,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("task gen failed for medication %s", obj.id)
     return obj
 
 

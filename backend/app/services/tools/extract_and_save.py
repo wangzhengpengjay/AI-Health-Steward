@@ -1,6 +1,7 @@
 """extract_and_save tool — extract health data from chat and persist it."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.family import FamilyMember
 from app.models.health import Lifestyle, MetricRecord
 from app.services.tools.base import HealthTool
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractAndSaveTool(HealthTool):
@@ -110,6 +113,16 @@ class ExtractAndSaveTool(HealthTool):
         db.add(record)
         await db.flush()
         await db.refresh(record)
+
+        # 功能①: 异常/危急指标自动生成复测/就医待办
+        try:
+            from app.services import task_service
+            await task_service.handle_metric_recorded(
+                db, member_id, record.metric_name,
+                record.is_abnormal, record.is_critical, record.id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("task generation failed for metric %s", record.id)
 
         flag = "（异常）" if is_abnormal else ""
         return {

@@ -48,6 +48,17 @@ async def create_metric(
     db.add(metric)
     await db.flush()
     await db.refresh(metric)
+
+    # 功能①: 异常/危急指标自动生成复测/就医待办
+    try:
+        from app.services import task_service
+        await task_service.handle_metric_recorded(
+            db, member_id, metric.metric_name,
+            metric.is_abnormal, metric.is_critical, metric.id,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("task generation failed for metric %s", metric.id)
     return metric
 
 

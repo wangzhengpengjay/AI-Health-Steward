@@ -119,6 +119,17 @@ async def recommend(
     )
     db.add(report)
     await db.flush()
+    await db.refresh(report)
+
+    # 功能①: 生成体检预约待办
+    try:
+        from app.services import task_service
+        await task_service.handle_checkup_generated(
+            db, member_id, "按体检推荐预约检查", report.id,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("task gen failed for checkup %s", report.id)
 
     return RecommendResponse(
         content=result["content"],

@@ -12,9 +12,11 @@ from app.models.health import (
     ReportRecord,
 )
 from app.models.feishu import FeishuChannel
+from app.models.tasks import HealthTask
 
 __all__ = [
     "FamilyMember",
+    "HealthTask",
     "MetricRecord",
     "Diagnosis",
     "Medication",

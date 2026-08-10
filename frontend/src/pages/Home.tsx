@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { membersApi, metricsApi, profileApi } from '@/lib/api'
+import { membersApi, metricsApi, profileApi, tasksApi } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 import type { FamilyMember } from '@/types'
 
@@ -44,6 +44,17 @@ function MemberCard({ member }: { member: FamilyMember }) {
     queryFn: () => profileApi.get(member.id),
     enabled: !!member.id,
   })
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['tasks', member.id],
+    queryFn: () => tasksApi.list(member.id, 'open'),
+    enabled: !!member.id,
+  })
+
+  const today = new Date()
+  const overdueTasks = tasks.filter((t) => t.due_date && new Date(t.due_date) < today)
+  const criticalTasks = tasks.filter((t) => t.priority === 'critical')
+  const taskCount = tasks.length
+  void criticalTasks
 
   const critical = metrics.filter(
     (r) => r.is_critical && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'),
@@ -89,7 +100,7 @@ function MemberCard({ member }: { member: FamilyMember }) {
       </div>
 
       {/* 状态统计 */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <div
           className={`rounded-field px-3 py-2 text-center ${
             critical.length > 0 ? 'bg-red-50 ring-1 ring-red-200' : 'bg-bg-tertiary'
@@ -110,12 +121,29 @@ function MemberCard({ member }: { member: FamilyMember }) {
           <div className="text-xl font-bold text-slate-600">{metrics.length}</div>
           <div className="text-[11px] text-slate-500">数据记录</div>
         </div>
+        <div
+          className={`rounded-field px-3 py-2 text-center ${
+            taskCount > 0 ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-bg-tertiary'
+          }`}
+        >
+          <div className={`text-xl font-bold ${taskCount > 0 ? 'text-indigo-600' : 'text-slate-500'}`}>
+            {taskCount}
+          </div>
+          <div className="text-[11px] text-slate-500">待办</div>
+        </div>
       </div>
 
       {/* 提醒文案 */}
       <div className="mt-3 min-h-[1.25rem] text-xs">
         {critical.length > 0 ? (
           <span className="font-medium text-red-600">⚠ 存在危急值，请尽快就医</span>
+        ) : taskCount > 0 ? (
+          <span className="font-medium text-indigo-600">
+            📋 {taskCount} 项待办
+            {overdueTasks.length > 0 && (
+              <span className="text-red-600">（{overdueTasks.length} 项已逾期）</span>
+            )}
+          </span>
         ) : abnormal.length > 0 ? (
           <span className="text-amber-600">有 {abnormal.length} 项指标异常，建议关注</span>
         ) : !hasProfileData && metrics.length === 0 ? (

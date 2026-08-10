@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { metricsApi, profileApi } from '@/lib/api'
+import { metricsApi, profileApi, tasksApi } from '@/lib/api'
 import { LabTabContent, ExamTimeline } from '@/components/MetricViews'
 import { useMemberStore } from '@/stores/memberStore'
 import type { MetricRecord } from '@/types'
@@ -43,6 +43,26 @@ export default function Dashboard() {
   const deleteMutation = useMutation({
     mutationFn: ({ type, id }: { type: string; id: number }) => profileApi.deleteRecord(type, id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile', currentMemberId] }),
+  })
+
+  // 功能①: 待办与提醒
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['tasks', currentMemberId],
+    queryFn: () => tasksApi.list(Number(currentMemberId), 'open'),
+    enabled: !!currentMemberId,
+  })
+  const taskMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      tasksApi.update(id, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks', currentMemberId] }),
+  })
+  const today = new Date()
+  const sortedTasks = [...tasks].sort((a, b) => {
+    if (a.priority === 'critical' && b.priority !== 'critical') return -1
+    if (b.priority === 'critical' && a.priority !== 'critical') return 1
+    const ad = a.due_date ? new Date(a.due_date).getTime() : Infinity
+    const bd = b.due_date ? new Date(b.due_date).getTime() : Infinity
+    return ad - bd
   })
 
   if (!currentMemberId || !member) {
@@ -135,6 +155,65 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* 功能①: 待办与提醒 */}
+        <div className="rounded-card border border-slate-200 bg-white p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-rounded text-indigo-500">checklist</span>
+              <h2 className="text-sm font-medium text-slate-700">待办与提醒</h2>
+              {sortedTasks.length > 0 && (
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600">
+                  {sortedTasks.length} 项待处理
+                </span>
+              )}
+            </div>
+          </div>
+          {sortedTasks.length === 0 ? (
+            <p className="py-3 text-center text-sm text-slate-400">暂无待办，一切就绪 ✓</p>
+          ) : (
+            <div className="space-y-2">
+              {sortedTasks.map((t) => {
+                const overdue = t.due_date && new Date(t.due_date) < today
+                const critical = t.priority === 'critical'
+                return (
+                  <div
+                    key={t.id}
+                    className={`flex items-center gap-3 rounded-field border px-3 py-2 ${
+                      critical ? 'border-red-200 bg-red-50' : overdue ? 'border-orange-200 bg-orange-50' : 'border-slate-100 bg-white'
+                    }`}
+                  >
+                    <button
+                      onClick={() => taskMutation.mutate({ id: t.id, status: 'done' })}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 text-transparent hover:border-indigo-400 hover:text-indigo-500"
+                      title="标记完成"
+                    >
+                      <span className="material-symbols-rounded text-sm">check</span>
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm font-medium ${critical ? 'text-red-700' : 'text-slate-700'}`}>
+                        {t.title}
+                      </div>
+                      {t.due_date && (
+                        <div className={`text-xs ${overdue ? 'text-orange-600' : 'text-slate-400'}`}>
+                          {overdue ? `已逾期 ${new Date(t.due_date).toLocaleDateString()}` : `到期 ${new Date(t.due_date).toLocaleDateString()}`}
+                        </div>
+                      )}
+                    </div>
+                    {critical && <span className="shrink-0 text-xs font-medium text-red-600">紧急</span>}
+                    <button
+                      onClick={() => taskMutation.mutate({ id: t.id, status: 'dismissed' })}
+                      className="shrink-0 rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      title="忽略"
+                    >
+                      忽略
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Basic info */}
         <div className="rounded-card border border-slate-200 bg-white p-5">
