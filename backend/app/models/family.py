@@ -67,3 +67,6 @@ class FamilyMember(Base):
     summaries: Mapped[list["HealthSummary"]] = relationship(  # noqa: F821
         back_populates="member", cascade="all, delete-orphan"
     )
+    scale_results: Mapped[list["ScaleResult"]] = relationship(  # noqa: F821
+        back_populates="member", cascade="all, delete-orphan"
+    )

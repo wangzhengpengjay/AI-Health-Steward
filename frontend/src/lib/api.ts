@@ -594,6 +594,53 @@ export interface HealthSummary {
   created_at: string
 }
 
+export interface ScaleQuestion {
+  id: string
+  text: string
+  options: { value: number; label: string }[]
+}
+
+export interface ScaleMeta {
+  code: string
+  name: string
+  description: string
+  question_count: number
+  trigger_keywords: string[]
+  caveat: string
+  should_push: boolean
+  reason?: string | null
+}
+
+export interface ScaleDetail extends ScaleMeta {
+  questions: ScaleQuestion[]
+  scoring: string
+}
+
+export interface ScaleResult {
+  id: number
+  member_id: number
+  scale_code: string
+  total_score: number
+  risk_level: string
+  risk_label?: string | null
+  advice?: string | null
+  interpretation?: string | null
+  created_at: string
+}
+
+export const scalesApi = {
+  list: (memberId: number) => request<ScaleMeta[]>(`/scales?member_id=${memberId}`),
+  detail: (memberId: number, code: string) =>
+    request<ScaleDetail>(`/members/${memberId}/scales/${code}`),
+  submit: (memberId: number, code: string, answers: Record<string, number>) =>
+    request<ScaleResult>(`/members/${memberId}/scales/${code}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    }),
+  results: (memberId: number) =>
+    request<ScaleResult[]>(`/members/${memberId}/scales/results`),
+}
+
 export const summariesApi = {
   list: (memberId: number, period?: string) =>
     request<HealthSummary[]>(

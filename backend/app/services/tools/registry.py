@@ -8,6 +8,7 @@ from app.services.tools.query_abnormal import QueryAbnormalTool
 from app.services.tools.query_metrics import QueryMetricsTool
 from app.services.tools.query_profile import QueryProfileTool
 from app.services.tools.query_reports import QueryReportsTool
+from app.services.tools.assess_scale import AssessScaleTool
 
 
 class ToolRegistry:
@@ -24,6 +25,7 @@ class ToolRegistry:
         self.register(QueryAbnormalTool())
         self.register(ExtractAndSaveTool())
         self.register(QueryReportsTool())
+        self.register(AssessScaleTool())
 
     def register(self, tool: HealthTool) -> None:
         """Register a tool instance."""

@@ -9,6 +9,7 @@ import MetricInput from './pages/MetricInput'
 import Settings from './pages/Settings'
 import CheckupRecommend from './pages/CheckupRecommend'
 import Summaries from './pages/Summaries'
+import Assess from './pages/Assess'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/checkup" element={<CheckupRecommend />} />
         <Route path="/summaries" element={<Summaries />} />
+        <Route path="/assess" element={<Assess />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
