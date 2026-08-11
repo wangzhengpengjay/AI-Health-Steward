@@ -289,8 +289,8 @@ async def upload_report(
     file_path.write_bytes(content)
 
     # Build data_url for AI extraction
-    b64 = base64.b64encode(content).decode("utf-8")
-    data_url = f"data:{mime};base64,{b64}"
+    from app.services.image_utils import prepare_for_multimodal
+    data_urls = prepare_for_multimodal(content, mime)
 
     # Run extraction
     provider = model_router.get_multimodal_provider()
@@ -316,12 +316,12 @@ async def upload_report(
 
     prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
+    user_content: list[dict] = [{"type": "text", "text": "请解析这份健康报告并提取结构化数据"}]
+    for url in data_urls:
+        user_content.append({"type": "image_url", "image_url": {"url": url}})
     messages = [
         Message(role="system", content=prompt),
-        Message(role="user", content=[
-            {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]),
+        Message(role="user", content=user_content),
     ]
 
     import asyncio
@@ -612,6 +612,9 @@ async def retry_extraction(
     record.extraction = None
     await db.flush()
 
+    from app.services.image_utils import prepare_for_multimodal
+    data_urls = prepare_for_multimodal(content, record.file_type)
+
     provider = model_router.get_multimodal_provider()
     members_result = await db.execute(
         select(FamilyMember).where(FamilyMember.is_deleted.is_(False))
@@ -631,12 +634,12 @@ async def retry_extraction(
     tabs_hint += f"\n已有检查分类标签：{existing_exam_cats}" if existing_exam_cats else "\n已有检查分类标签：无"
     tabs_hint += "\n重要：report_name 和 finding_category 必须优先复用已有标签，仅当无法匹配时才新建简短标准名。"
     prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
+    user_content2: list[dict] = [{"type": "text", "text": "请解析这份健康报告并提取结构化数据"}]
+    for url in data_urls:
+        user_content2.append({"type": "image_url", "image_url": {"url": url}})
     messages = [
         Message(role="system", content=prompt),
-        Message(role="user", content=[
-            {"type": "text", "text": "请解析这份健康报告并提取结构化数据"},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]),
+        Message(role="user", content=user_content2),
     ]
 
     import asyncio
