@@ -368,7 +368,7 @@ body.js-anim .reveal.visible{opacity:1;transform:none}
   var burger=document.getElementById('burger'),menu=document.getElementById('menu');
   burger.addEventListener('click',function(){menu.classList.toggle('open')});
   menu.addEventListener('click',function(e){if(e.target.tagName==='A')menu.classList.remove('open')});
-  document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var id=a.getAttribute('href').slice(1);var el=id?document.getElementById(id):null;if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})}})});
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var id=a.getAttribute('href').slice(1);var el=id?document.getElementById(id):null;if(el){e.preventDefault();var top=el.getBoundingClientRect().top+window.pageYOffset-68;window.scrollTo({top:top>0?top:0,behavior:'auto'})}})});
   var io=new IntersectionObserver(function(en){en.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target)}})},{threshold:0.1});
   document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
   function count(el){var t=parseInt(el.getAttribute('data-count')||'0',10);var cur=0;var step=Math.max(1,Math.round(t/40));var iv=setInterval(function(){cur=Math.min(t,cur+step);el.textContent=cur;if(cur>=t)clearInterval(iv)},30)}
