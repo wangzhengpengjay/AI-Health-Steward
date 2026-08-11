@@ -47,15 +47,13 @@ async def test_critical_metric_generates_immediate_task():
 
 
 @pytest.mark.asyncio
-async def test_abnormal_metric_generates_recheck_in_30d():
+async def test_abnormal_metric_no_recheck_task():
+    """异常(非危急)不实时落复查待办——复查由小结模型统一判断。"""
     db = _mock_db()
     task = await task_service.handle_metric_recorded(
         db, 6, "fasting_glucose", True, False, 102
     )
-    assert task is not None
-    assert task.task_type == "recheck"
-    assert task.priority == "normal"
-    assert task.due_date == date.today() + timedelta(days=30)
+    assert task is None
 
 
 @pytest.mark.asyncio

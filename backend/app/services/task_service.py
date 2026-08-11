@@ -79,8 +79,10 @@ async def handle_metric_recorded(
 ) -> HealthTask | None:
     """Generate a task after a metric is saved.
 
-    - critical value → immediate recheck / seek care (high priority)
-    - abnormal value  → schedule a recheck in ~30 days
+    Only CRITICAL values get an immediate to-do (seek care / re-test today).
+    Abnormal-but-not-critical rechecks are delegated to the summary-time model
+    judgment (`_sync_recheck_tasks`), which groups by check category and
+    calibrates the due date — avoiding duplicate to-dos from dual sources.
     """
     if is_critical:
         return await _add_task(
@@ -91,17 +93,6 @@ async def handle_metric_recorded(
             description="检测到危急值，请尽快就医或复测确认。",
             due_date=date.today(),
             priority="critical",
-            source_ref=f"metric:{record_id}",
-        )
-    if is_abnormal:
-        return await _add_task(
-            db,
-            member_id,
-            "recheck",
-            f"复查{_metric_label(metric_name)}",
-            description="该指标异常，建议近期复查跟踪。",
-            due_date=date.today() + timedelta(days=30),
-            priority="normal",
             source_ref=f"metric:{record_id}",
         )
     return None
