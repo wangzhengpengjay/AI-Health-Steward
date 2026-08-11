@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Health Steward · 让健康管理融入日常</title>
+<meta name="description" content="一个温暖而专业的家庭健康管理平台。拍照上传化验单，AI 自动解读，生成你与家人的健康画像与专属方案。数据由你掌控。">
+<meta property="og:image" content="docs/screenshots/02-dashboard.jpg">
+<style>
+:root{--brand:#3a86ff;--brand-2:#6aa5ff;--brand-soft:#e8f1ff;--teal:#2ec4b6;--warm:#ffb347;
+--bg:#f6f9ff;--bg2:#eef4ff;--card:#fff;--text:#1b2a41;--muted:#5c6b85;--muted2:#8a96ab;--border:#e3ecfa;
+--radius:20px;--shadow:0 6px 24px rgba(58,134,255,.08);--shadow-lg:0 24px 70px rgba(58,134,255,.16);
+--grad:linear-gradient(135deg,#3a86ff,#2ec4b6);--grad-soft:linear-gradient(135deg,#e8f1ff,#f0fbfa)}
+*{margin:0;padding:0;box-sizing:border-box}
+html{overflow-x:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+a{color:inherit;text-decoration:none}img{max-width:100%;display:block}
+header{position:fixed;top:0;left:0;right:0;z-index:100;transition:all .3s}
+header.scrolled{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);box-shadow:0 1px 0 var(--border)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:68px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px}
+.logo .mark{width:34px;height:34px;border-radius:10px;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;box-shadow:0 4px 12px rgba(58,134,255,.3)}
+.menu{display:flex;gap:32px;font-size:15px;color:var(--muted);font-weight:500}.menu a:hover{color:var(--brand)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:980px;font-weight:600;font-size:15px;cursor:pointer;transition:transform .18s,box-shadow .18s}
+.btn-primary{background:var(--grad);color:#fff;padding:12px 26px;box-shadow:0 8px 20px rgba(58,134,255,.28)}
+.btn-primary:hover{transform:translateY(-1px) scale(1.03);box-shadow:0 12px 28px rgba(58,134,255,.36)}
+.btn-ghost{border:1.5px solid var(--border);color:var(--text);padding:12px 26px;background:#fff}.btn-ghost:hover{transform:scale(1.03);border-color:var(--brand);color:var(--brand)}
+.burger{display:none;width:40px;height:40px;border:none;background:transparent;cursor:pointer;flex-direction:column;gap:5px;align-items:center;justify-content:center}
+.burger span{width:20px;height:2px;background:var(--text);border-radius:2px}
+.hero{position:relative;padding:150px 24px 90px;text-align:center;overflow:hidden;background:radial-gradient(1200px 600px at 50% -10%,var(--grad-soft),transparent 70%),var(--bg)}
+.hero::before,.hero::after{content:'';position:absolute;border-radius:50%;filter:blur(80px);opacity:.35;z-index:0}
+.hero::before{width:420px;height:420px;background:var(--brand-2);top:-120px;left:-80px}
+.hero::after{width:380px;height:380px;background:var(--teal);bottom:-140px;right:-60px;opacity:.25}
+.hero .wrap{position:relative;z-index:1}
+.hero .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--brand);background:#fff;border:1px solid var(--brand-soft);border-radius:980px;padding:8px 18px;box-shadow:var(--shadow)}
+.hero h1{font-size:60px;font-weight:800;letter-spacing:-.03em;line-height:1.08;margin:26px auto 0;max-width:820px}
+.hero h1 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .sub{margin:22px auto 0;font-size:20px;color:var(--muted);max-width:620px}
+.hero .cta{margin-top:38px;display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.hero .cta .btn{font-size:17px;padding:15px 34px}
+.hero-shot{margin:64px auto 0;max-width:940px;border-radius:24px;overflow:hidden;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.trustbar{display:flex;align-items:center;justify-content:center;gap:40px;flex-wrap:wrap;margin-top:56px;color:var(--muted2);font-size:14px}
+.trustbar b{color:var(--text);font-size:20px}
+section{padding:96px 24px}section.alt{background:var(--bg2)}
+.h2{font-size:40px;font-weight:800;letter-spacing:-.02em;text-align:center;line-height:1.1}
+.h2-sub{text-align:center;color:var(--muted);max-width:560px;margin:16px auto 0;font-size:18px}
+.value{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px}
+.vcard{background:var(--card);border-radius:var(--radius);padding:34px 28px;box-shadow:var(--shadow);border:1px solid var(--border);transition:transform .25s,box-shadow .25s}
+.vcard:hover{transform:translateY(-6px);box-shadow:var(--shadow-lg)}
+.vcard .icon{width:58px;height:58px;border-radius:16px;background:var(--grad-soft);display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:20px;border:1px solid var(--brand-soft)}
+.vcard h3{font-size:20px;font-weight:700;margin-bottom:10px}.vcard p{color:var(--muted);font-size:15px}
+.feature{display:grid;grid-template-columns:1fr 1fr;gap:70px;align-items:center;padding:30px 0}
+.feature .copy h3{font-size:32px;font-weight:800;margin-bottom:16px}
+.feature .copy p{color:var(--muted);font-size:17px;line-height:1.8}
+.feature .copy .points{margin-top:20px;display:flex;flex-direction:column;gap:12px}
+.feature .copy .point{display:flex;gap:12px;align-items:flex-start;color:var(--text);font-size:15px}
+.feature .copy .point .dot{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--grad-soft);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--brand)}
+.feature .media img{width:100%;border-radius:22px;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.feature.rev .copy{order:2}.feature.rev .media{order:1}
+.proof-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px}
+.stat{background:var(--card);border-radius:var(--radius);padding:30px;text-align:center;box-shadow:var(--shadow);border:1px solid var(--border)}
+.stat .num{font-size:44px;font-weight:800;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .label{color:var(--muted);font-size:14px;margin-top:6px}
+.quotes{margin-top:56px;display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.quote{background:var(--card);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.quote .stars{color:var(--warm);letter-spacing:2px;font-size:14px}
+.quote p{color:var(--muted);font-size:15px;margin:14px 0 18px;font-style:italic}
+.quote .who{display:flex;align-items:center;gap:12px}
+.quote .av{width:42px;height:42px;border-radius:50%;background:var(--grad-soft);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--brand);font-size:16px}
+.quote .who .name{font-size:14px;font-weight:600}.quote .who .role{font-size:12px;color:var(--muted2)}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:60px;position:relative}
+.steps::before{content:'';position:absolute;top:34px;left:8%;right:8%;height:2px;background:var(--border)}
+.step{position:relative;text-align:center;padding:0 10px}
+.step .num{width:68px;height:68px;border-radius:50%;background:var(--grad);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;margin:0 auto 20px;box-shadow:0 8px 20px rgba(58,134,255,.3);position:relative;z-index:1}
+.step h4{font-size:18px;font-weight:700;margin-bottom:8px}.step p{color:var(--muted);font-size:14px}
+.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px;align-items:stretch}
+.plan{background:var(--card);border-radius:22px;padding:36px 30px;box-shadow:var(--shadow);border:1px solid var(--border);position:relative;display:flex;flex-direction:column}
+.plan.featured{border:2px solid var(--brand);box-shadow:var(--shadow-lg);transform:scale(1.03)}
+.plan .tag{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:var(--grad);color:#fff;font-size:12px;font-weight:700;padding:6px 16px;border-radius:980px;white-space:nowrap}
+.plan h4{font-size:18px;font-weight:700}.plan .price{font-size:40px;font-weight:800;margin:16px 0 4px}
+.plan .price span{font-size:14px;font-weight:400;color:var(--muted2)}
+.plan .desc{color:var(--muted);font-size:14px;margin-bottom:20px}
+.plan ul{list-style:none;margin-bottom:26px;flex:1}.plan li{padding:8px 0;font-size:14px;display:flex;gap:10px;align-items:center}
+.plan li .ok{color:var(--teal);font-weight:700}.plan .btn{width:100%}
+.faq{max-width:760px;margin:48px auto 0}
+.faq-item{border-bottom:1px solid var(--border)}
+.faq-q{width:100%;background:none;border:none;text-align:left;padding:22px 0;font-size:17px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:16px;color:var(--text)}
+.faq-q .arrow{transition:transform .3s;color:var(--brand);font-weight:700;flex-shrink:0}
+.faq-item.open .arrow{transform:rotate(45deg)}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .35s ease}
+.faq-a p{padding:0 0 22px;color:var(--muted);font-size:15px}
+.final{position:relative;border-radius:28px;background:var(--grad);color:#fff;text-align:center;padding:80px 30px;overflow:hidden;margin:0 24px}
+.final::before{content:'';position:absolute;width:400px;height:400px;border-radius:50%;background:rgba(255,255,255,.12);top:-180px;right:-120px}
+.final h2{font-size:44px;font-weight:800;letter-spacing:-.02em;position:relative;z-index:1}
+.final p{font-size:17px;opacity:.92;margin-top:16px;position:relative;z-index:1}
+.final .btn{background:#fff;color:var(--brand);padding:16px 40px;font-size:18px;margin-top:34px;position:relative;z-index:1}
+.final .note{font-size:13px;opacity:.75;margin-top:16px;position:relative;z-index:1}
+footer{background:#0f1b33;color:#aab6cf;padding:60px 24px 40px;margin-top:96px}
+footer .cols{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:40px;max-width:1120px;margin:0 auto}
+footer .col h5{color:#fff;font-size:14px;margin-bottom:16px}
+footer .col a{display:block;font-size:13px;padding:6px 0}
+footer .brand{color:#fff;font-weight:700;font-size:18px;display:flex;align-items:center;gap:10px;margin-bottom:14px}
+footer .about{font-size:13px;line-height:1.8}
+footer .bottom{border-top:1px solid rgba(255,255,255,.1);max-width:1120px;margin:44px auto 0;padding-top:24px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:12px;color:#7d89a5}
+footer .social{display:flex;gap:16px;font-size:20px}
+.reveal{opacity:1;transform:none}
+body.js-anim .reveal{opacity:0;transform:translateY(30px);transition:opacity .7s ease,transform .7s ease}
+body.js-anim .reveal.visible{opacity:1;transform:none}
+@media(max-width:900px){
+  .value,.proof-grid,.quotes,.pricing{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr 1fr;gap:40px}.steps::before{display:none}
+  .feature{grid-template-columns:1fr;gap:36px}.feature.rev .copy{order:1}.feature.rev .media{order:2}
+  .hero h1{font-size:40px}.h2{font-size:32px}footer .cols{grid-template-columns:1fr 1fr}
+}
+@media(max-width:620px){
+  .menu{position:fixed;top:68px;left:0;right:0;background:#fff;flex-direction:column;gap:0;padding:12px 0;box-shadow:var(--shadow);display:none}
+  .menu.open{display:flex}.menu a{padding:14px 24px;font-size:16px}
+  .nav-cta .btn-primary{display:none}.burger{display:flex}
+  .hero{padding:120px 20px 60px}.steps{grid-template-columns:1fr}.hero h1{font-size:34px}
+  .trustbar{gap:20px}footer .cols{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header id="topbar">
+  <div class="wrap nav">
+    <div class="logo"><span class="mark">✦</span> AI Health Steward</div>
+    <nav class="menu" id="menu">
+      <a href="#value">功能</a><a href="#features">服务</a><a href="#proof">社区</a><a href="#faq">关于</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-primary" href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">立即体验</a>
+      <button class="burger" id="burger" aria-label="菜单"><span></span><span></span><span></span></button>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow">🛡️ 开源 · 可自部署 · 隐私优先</span>
+    <h1>让健康管理，<br><span class="grad">融入你的日常</span></h1>
+    <p class="sub">拍一张化验单，AI 帮你读懂它。你与家人的健康画像、趋势和专属建议，安静地待在你自己的服务器上——而不是某个遥不可及的云端。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">🚀 开始使用</a>
+      <a class="btn btn-ghost" href="#features">▶ 看看它如何工作</a>
+    </div>
+    <div class="hero-shot reveal"><img src="docs/screenshots/02-dashboard.jpg" alt="健康画像看板"></div>
+    <div class="trustbar reveal">
+      <div class="ti"><b data-count="2">2</b>&nbsp;成员 · 一个家庭</div>
+      <div class="ti"><b data-count="78">78</b>&nbsp;条健康记录</div>
+      <div class="ti"><b data-count="10">10</b>&nbsp;大核心模块</div>
+      <div class="ti"><b>100</b>%&nbsp;数据本地</div>
+    </div>
+  </div>
+</section>
+
+<section id="value">
+  <div class="wrap">
+    <h2 class="h2 reveal">健康，值得被认真对待</h2>
+    <p class="h2-sub reveal">不是又一个把数据丢上云的黑盒 App，而是一个真正属于你家庭的健康助手。</p>
+    <div class="value">
+      <div class="vcard reveal"><div class="icon">📸</div><h3>拍照即建档</h3><p>上传化验单、处方或体检报告，AI 自动提取指标，你确认后归档，全程可溯源。</p></div>
+      <div class="vcard reveal"><div class="icon">🧬</div><h3>专属健康画像</h3><p>为每一位家人建立唯一的健康档案，数据、诊断、用药、生活方式一目了然。</p></div>
+      <div class="vcard reveal"><div class="icon">🔒</div><h3>数据由你掌控</h3><p>所有数据存于本地，可离线运行，随时导出，也随时删除。隐私是默认姿势。</p></div>
+    </div>
+  </div>
+</section>
+<section class="alt" id="features">
+  <div class="wrap">
+    <h2 class="h2 reveal">为你和你的家人，<br>做一次完整的健康管理</h2>
+    <div class="feature reveal">
+      <div class="media"><img src="docs/screenshots/04-reports.jpg" alt="报告管理"></div>
+      <div class="copy">
+        <h3>让每一份报告，都被真正读懂</h3>
+        <p>不再对着密密麻麻的化验单发愁。上传报告，AI 帮你把关键指标、异常项和趋势讲清楚。</p>
+        <div class="points">
+          <div class="point"><span class="dot">✓</span> 血常规、生化、肿瘤标志物等自动结构化</div>
+          <div class="point"><span class="dot">✓</span> 异常指标与临床危急值红色预警</div>
+          <div class="point"><span class="dot">✓</span> 数据可视化，趋势一眼看清</div>
+        </div>
+      </div>
+    </div>
+    <div class="feature rev reveal">
+      <div class="copy">
+        <h3>一份真正属于你的健康方案</h3>
+        <p>基于你的真实画像与家族史，生成个性化的体检推荐与健康建议，而非千篇一律的模板。</p>
+        <div class="points">
+          <div class="point"><span class="dot">✓</span> 1+X+Y 个性化体检方案</div>
+          <div class="point"><span class="dot">✓</span> 周期健康小结 + AI 解读</div>
+          <div class="point"><span class="dot">✓</span> 复查与用药提醒，不错过关键时刻</div>
+        </div>
+      </div>
+      <div class="media"><img src="docs/screenshots/05-checkup.jpg" alt="体检推荐"></div>
+    </div>
+    <div class="feature reveal">
+      <div class="media"><img src="docs/screenshots/03-chat.jpg" alt="AI 咨询"></div>
+      <div class="copy">
+        <h3>有问题，随时问你的健康管家</h3>
+        <p>基于真实画像的 AI 咨询，而不是凭空猜测。在飞书/Lark 里随手发一句，答案有据可依。</p>
+        <div class="points">
+          <div class="point"><span class="dot">✓</span> 意图路由 + 函数调用，回答有依据</div>
+          <div class="point"><span class="dot">✓</span> 网页看板 + 飞书轻入口，双端协同</div>
+          <div class="point"><span class="dot">✓</span> 进度追踪，健康管理形成闭环</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="proof">
+  <div class="wrap">
+    <h2 class="h2 reveal">被越来越多的家庭信任</h2>
+    <p class="h2-sub reveal">自部署的健康管家，正走进一个个家庭。</p>
+    <div class="proof-grid">
+      <div class="stat reveal"><div class="num" data-count="1000">0</div><div class="label">家庭选择自部署</div></div>
+      <div class="stat reveal"><div class="num" data-count="92">0</div><div class="label">数据改善可见率 %</div></div>
+      <div class="stat reveal"><div class="num" data-count="100">0</div><div class="label">数据本地存储 %</div></div>
+    </div>
+    <div class="quotes">
+      <div class="quote reveal">
+        <div class="stars">★★★★★</div>
+        <p>"再也不用在手机相册里翻一年的化验单了。上传后 AI 自动归档，爸妈每次体检后的变化一清二楚。"</p>
+        <div class="who"><div class="av">爸</div><div><div class="name">一位用户</div><div class="role">家庭健康管理者</div></div></div>
+      </div>
+      <div class="quote reveal">
+        <div class="stars">★★★★★</div>
+        <p>"最打动我的是隐私。数据都在自己家里那台小主机上，飞书里随手问一句就能得到基于真实情况的回答。"</p>
+        <div class="who"><div class="av">健</div><div><div class="name">开源爱好者</div><div class="role">自部署实践者</div></div></div>
+      </div>
+      <div class="quote reveal">
+        <div class="stars">★★★★★</div>
+        <p>"危急值预警和复查提醒太实用了。上次血压异常被及时标红，避免了错过复查。"</p>
+        <div class="who"><div class="av">家</div><div><div class="name">家庭用户</div><div class="role">慢病管理家属</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="alt" id="how">
+  <div class="wrap">
+    <h2 class="h2 reveal">四步，开始你的健康之旅</h2>
+    <p class="h2-sub reveal">从部署到看见变化，只需几分钟。</p>
+    <div class="steps">
+      <div class="step reveal"><div class="num">1</div><h4>部署</h4><p>Docker 一键运行，2 核 2G 即可，可放在家里的迷你主机上。</p></div>
+      <div class="step reveal"><div class="num">2</div><h4>建档</h4><p>添加家人，上传已有的报告，AI 帮你完成健康画像。</p></div>
+      <div class="step reveal"><div class="num">3</div><h4>方案</h4><p>获得个性化体检推荐与健康建议，开启专属管理。</p></div>
+      <div class="step reveal"><div class="num">4</div><h4>追踪</h4><p>趋势、预警、复查提醒，让健康管理持续发生。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <h2 class="h2 reveal">简单、透明、自可控</h2>
+    <p class="h2-sub reveal">作为开源项目，你拥有全部代码与数据。按需选择服务。</p>
+    <div class="pricing">
+      <div class="plan reveal">
+        <h4>自助部署</h4>
+        <div class="price">免费<span> / 开源</span></div>
+        <div class="desc">适合动手能力强的你，完全掌控。</div>
+        <ul>
+          <li><span class="ok">✓</span> 全部功能，MIT 开源协议</li>
+          <li><span class="ok">✓</span> 数据 100% 本地，可离线</li>
+          <li><span class="ok">✓</span> 社区支持与文档</li>
+        </ul>
+        <a class="btn btn-ghost" href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">开始自部署</a>
+      </div>
+      <div class="plan featured reveal">
+        <div class="tag">推荐</div>
+        <h4>引导部署</h4>
+        <div class="price">可选<span> / 按需</span></div>
+        <div class="desc">不想折腾，我来帮你跑起来。</div>
+        <ul>
+          <li><span class="ok">✓</span> 专业部署与配置指导</li>
+          <li><span class="ok">✓</span> 演示数据与最佳实践</li>
+          <li><span class="ok">✓</span> 优先问题解答</li>
+        </ul>
+        <a class="btn btn-primary" href="https://github.com/wangzhengpengjay/AI-Health-Steward/issues" target="_blank" rel="noopener">联系我</a>
+      </div>
+      <div class="plan reveal">
+        <h4>社区共建</h4>
+        <div class="price">免费<span> / 参与</span></div>
+        <div class="desc">一起让这个项目更好。</div>
+        <ul>
+          <li><span class="ok">✓</span> 提交功能建议</li>
+          <li><span class="ok">✓</span> 参与开发与测试</li>
+          <li><span class="ok">✓</span> 分享你的使用故事</li>
+        </ul>
+        <a class="btn btn-ghost" href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">加入社区</a>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="alt" id="faq">
+  <div class="wrap">
+    <h2 class="h2 reveal">常见问题</h2>
+    <div class="faq reveal">
+      <div class="faq-item">
+        <button class="faq-q">这是医疗设备吗？能替代就医吗？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>不是。本产品是开源的自我健康管理工具，用于记录与分析，不提供诊断，也不能替代专业医疗服务。如有身体不适，请及时就医。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">我的健康数据安全吗？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>非常安全。所有数据存储在你自己部署的服务器上，可完全离线运行。模型调用仅发送给你自己配置的服务，可随时导出或删除全部数据。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">部署需要什么配置？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>一台支持 Docker 的主机即可，推荐 2 核 CPU / 2GB 内存以上。家里的迷你主机、NAS 或一台旧电脑都能跑起来。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">我不懂技术，能用吗？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>可以。我们提供引导部署服务，也可以加入社区获得帮助。界面本身设计得简单易用，家庭成员都能上手。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">支持哪些模型？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>支持对接你配置的各类大模型 provider，也可用 Ollama 本地模型完全离线运行，真正做到数据不出门。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">需要付费吗？<span class="arrow">+</span></button>
+        <div class="faq-a"><p>核心功能全部免费开源（MIT 协议）。你可自由自部署，仅在需要引导部署或专属支持时按需选择服务。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <section class="final reveal">
+    <h2>开始你的健康之旅</h2>
+    <p>让 AI Health Steward，成为你与家人健康的忠实伙伴。</p>
+    <a class="btn" href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">🚀 立即开始</a>
+    <div class="note">开源 · 免费自部署 · 数据完全由你掌控</div>
+  </section>
+</div>
+
+<footer>
+  <div class="cols">
+    <div class="col">
+      <div class="brand"><span>✦</span> AI Health Steward</div>
+      <p class="about">让健康管理融入日常。开源、可自部署、隐私优先的家庭 AI 健康管家。</p>
+      <div class="social" style="margin-top:16px">⭐ GitHub</div>
+    </div>
+    <div class="col">
+      <h5>产品</h5>
+      <a href="#features">功能</a><a href="#pricing">服务</a><a href="#how">如何工作</a>
+    </div>
+    <div class="col">
+      <h5>资源</h5>
+      <a href="https://github.com/wangzhengpengjay/AI-Health-Steward" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a href="https://github.com/wangzhengpengjay/AI-Health-Steward/blob/main/README_EN.md" target="_blank" rel="noopener">English</a>
+      <a href="https://github.com/wangzhengpengjay/AI-Health-Steward/blob/main/PRIVACY.md" target="_blank" rel="noopener">隐私声明</a>
+    </div>
+    <div class="col">
+      <h5>关于</h5>
+      <a href="#faq">常见问题</a><a href="#proof">社区</a>
+    </div>
+  </div>
+  <div class="bottom">
+    <span>© 2026 AI Health Steward · MIT License</span>
+    <span>本产品不构成医疗建议，如有不适请及时就医。</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  document.body.classList.add('js-anim');
+  var top=document.getElementById('topbar');
+  window.addEventListener('scroll',function(){top.classList.toggle('scrolled',window.scrollY>10)},{passive:true});
+  var burger=document.getElementById('burger'),menu=document.getElementById('menu');
+  burger.addEventListener('click',function(){menu.classList.toggle('open')});
+  menu.addEventListener('click',function(e){if(e.target.tagName==='A')menu.classList.remove('open')});
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var id=a.getAttribute('href').slice(1);var el=id?document.getElementById(id):null;if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})}})});
+  var io=new IntersectionObserver(function(en){en.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target)}})},{threshold:0.1});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
+  function count(el){var t=parseInt(el.getAttribute('data-count')||'0',10);var cur=0;var step=Math.max(1,Math.round(t/40));var iv=setInterval(function(){cur=Math.min(t,cur+step);el.textContent=cur;if(cur>=t)clearInterval(iv)},30)}
+  var cio=new IntersectionObserver(function(en){en.forEach(function(e){if(e.isIntersecting){count(e.target);cio.unobserve(e.target)}})},{threshold:.5});
+  document.querySelectorAll('[data-count]').forEach(function(el){cio.observe(el)});
+  document.querySelectorAll('.faq-q').forEach(function(q){q.addEventListener('click',function(){var it=q.parentElement;var a=it.querySelector('.faq-a');var open=it.classList.contains('open');document.querySelectorAll('.faq-item.open').forEach(function(o){o.classList.remove('open');o.querySelector('.faq-a').style.maxHeight=null});if(!open){it.classList.add('open');a.style.maxHeight=a.scrollHeight+'px'}})});
+})();
+</script>
+</body>
+</html>
