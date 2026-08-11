@@ -1,28 +1,56 @@
 # AI Health Steward
 
-> Open-source, self-hosted family AI health manager. Structures health data into a per-person health profile via multimodal LLMs, providing visual dashboards and AI consultations, with multi-channel support (Feishu, etc.) for data collection and lightweight Q&A.
+**Your health. Your data. Your AI. — fully self-hosted.**
+
+> Open-source, private, self-hosted family AI health steward. Multimodal AI structures your family's health data into per-person health profiles, with a visual dashboard and AI consultations grounded in real data — deployed on *your* server, never a closed platform.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/deploy-Docker%20Compose-2496ed.svg)](DEPLOYMENT.md)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg)](backend)
+[![React](https://img.shields.io/badge/React-18-61DAFB.svg)](frontend)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](docker-compose.yml)
 
 [中文文档](README.md)
 
+---
+
+## Why self-hosted? Privacy is the whole point.
+
+Most health apps are black boxes: your lab results, diagnoses, and medications get uploaded to someone else's cloud and monetized. **AI Health Steward is the opposite.**
+
+- 🔒 **Your data never leaves your server** — health records, reports, and profiles live entirely on hardware you control. Nothing is uploaded to any cloud automatically.
+- 🏠 **One instance serves your whole family** — multi-member with fully isolated data.
+- 🧠 **Bring your own AI** — plug in any OpenAI-compatible model (GPT-4o, DeepSeek, etc.) *or* run fully offline with a local LLM (e.g. Ollama). When you use a cloud model, only the specific query and image you send go to *your* chosen provider — and you can opt out entirely.
+- 🗄️ **Total data control** — export everything as JSON anytime, or delete records with a soft-delete safety net.
+
+> A health record is the most sensitive data you own. It should not be a product. It should live on your shelf.
+
+---
+
 ## Features
 
-- **Self-hosted & Private** — All health data stays on your local server, fully under your control
-- **Multimodal Report Import** — Upload photos of medical reports, lab results, or prescriptions; AI automatically extracts structured key metrics with user confirmation
+- **Self-hosted & Private** — all health data stays on your local server, fully under your control; optional Bearer-token auth + per-member rate limiting
+- **Multimodal Report Import** — upload photos of medical reports, lab results, or prescriptions; AI extracts structured key metrics with your confirmation
 - **Person-Level Health Profile** — A–H field families (basic info / physiological metrics / diagnoses / medications / allergies / lifestyle / family history / data provenance) as a single source of truth
-- **AI Health Consultation** — Intent routing via function calling, answers based on your actual profile data — not a generic chatbot
-- **Metric Trend Visualization** — Blood pressure, blood glucose, heart rate, weight/BMI trend charts with abnormal markers
-- **Personalized Checkup Recommendations** — Generates customized checkup plans based on health profiles using the 1+X+Y framework (core basics / condition-specific / risk screening), with budget tier selection and safety contraindication checks
-- **Lab & Exam Tracking** — Lab results grouped by report name with per-test charts; exam findings (e.g., pulmonary nodules) displayed on a timeline
-- **Feishu Integration** — Configure multiple Feishu bots, each bound to a family member; WebSocket long-connection for message reception, supporting text Q&A and image report extraction
-- **Pluggable Models** — Multimodal API (required) / Text API (optional) / Local LLM (optional), configured on demand
-- **Family Multi-Member** — Single instance serves one family with isolated member data
-- **Report Management** — Full report lifecycle (upload → AI extraction → confirm → archive), with three upload entry points: report page, metric page, and AI chat
-- **Lab & Exam Tracking** — Lab metrics grouped by report with per-test trend charts; exam findings displayed on a category timeline
-- **AI Image Interpretation** — Send report images in chat; AI extracts structured data first, then provides professional interpretation based on the extracted data, with one-click archiving
-- **Report Semantic Search (RAG)** — Archived reports are automatically vectorized; AI consultations can semantically retrieve historical report content
-- **System Settings** — Visual management of model configs, health checks, data export/wipe via the UI; changes take effect immediately
+- **AI Health Consultation** — intent routing via function calling; answers grounded in your actual profile data — not a generic chatbot
+- **Metric Trend Visualization** — blood pressure, blood glucose, heart rate, weight/BMI trend charts with abnormal markers and clinical **critical-value alerts** (e.g. BP ≥180/110)
+- **Age-Tiered Reference Ranges** — normal ranges auto-matched to adult vs. child to avoid misjudging kids' metrics
+- **Personalized Checkup Recommendations** — 1+X+Y framework (core basics / condition-specific / risk screening), budget tiers, safety/contraindication checks
+- **Periodic Health Summaries** — auto weekly/monthly/yearly reports with trends, anomalies, and follow-up items
+- **Risk Self-Assessment** — built-in PHQ-9, GAD-7, diabetes, and ASCVD (cardiovascular) scales
+- **Follow-up / Medication Reminders** — auto-generated todo tasks (recheck / medication / follow-up / appointment)
+- **Report Management** — full lifecycle (upload → AI extraction → confirm → archive); three upload entry points
+- **Lab & Exam Tracking** — lab metrics grouped by report with per-test charts; exam findings on a category timeline
+- **AI Image Interpretation** — send report images in chat; AI extracts structured data, interprets it, one-click archive
+- **Report Semantic Search (RAG)** — archived reports auto-vectorized for semantic Q&A over your history
+- **Long-Term Conversation Memory** — each consultation rolls into a compressed per-member long-term memory
+- **Feishu / Lark Integration** — multiple bots, one per family member; WebSocket for text Q&A and image parsing (great on mobile)
+- **Dual-Entry Design** — WebUI is the full management backend; Feishu is the lightweight daily entry point; data flows between both automatically
+- **Pluggable Models** — multimodal API / text API / local LLM, configured on demand
+- **Cost Optimization** — eliminates duplicate metric-extraction LLM calls; skips LLM when a summary has no new data
+- **System Settings** — manage models, health checks, data export/wipe from the UI
+
+---
 
 ## Quick Start
 
@@ -66,6 +94,8 @@ docker exec health-steward-backend python -m scripts.seed_demo_data
 
 See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 
+---
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -76,6 +106,8 @@ See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 | ORM | SQLAlchemy 2.0 + Alembic |
 | AI | OpenAI-compatible API (multimodal/text) + Ollama (local LLM) |
 | Deployment | Docker Compose |
+
+---
 
 ## Project Structure
 
@@ -104,6 +136,8 @@ AI-Health-Steward/
 └── README.md
 ```
 
+---
+
 ## Roadmap
 
 | Version | Goal | Status |
@@ -112,13 +146,17 @@ AI-Health-Steward/
 | V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
 | V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations, RAG | ✅ Done |
 | V0.4 | Feishu channel — multi-channel management, data collection, lightweight Q&A | ✅ Done |
-| V1.0 | Open-source release — docs, one-click deploy | 🔧 In Progress |
+| V1.0 | Open-source release — docs, one-click deploy, hardening (age-tiered ranges / critical-value alerts / family overview / long-term memory / auth & rate limiting) | 🔧 In Progress |
+
+---
 
 ## Screenshots
 
 ![Health Dashboard](docs/screenshots/dashboard-overview.png)
 ![AI Chat Report Analysis](docs/screenshots/chat-report-extraction.png)
 ![Metric Management](docs/screenshots/metric-input.png)
+
+---
 
 ## Privacy
 
@@ -127,6 +165,8 @@ AI-Health-Steward/
 - **Data Control**: Users can view, modify, export, or delete all data at any time
 
 See [Privacy Statement](PRIVACY.md) for details.
+
+---
 
 ## Contributing
 
