@@ -158,8 +158,6 @@ AI-Health-Steward/
 
 ![AI Chat Consultation](docs/screenshots/03-chat.jpg)
 
-![Report Management](docs/screenshots/04-reports.jpg)
-
 ![Metric Management](docs/screenshots/09-metric-input.jpg)
 
 ---

@@ -173,8 +173,6 @@ ai-health-steward/
 
 ![AI 咨询对话](docs/screenshots/03-chat.jpg)
 
-![报告管理](docs/screenshots/04-reports.jpg)
-
 ![指标管理与录入](docs/screenshots/09-metric-input.jpg)
 
 ## 隐私声明
