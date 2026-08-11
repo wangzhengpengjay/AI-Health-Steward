@@ -167,9 +167,15 @@ ai-health-steward/
 
 ## 项目截图
 
-![健康画像看板](docs/screenshots/dashboard-overview.png)
-![AI咨询报告解读](docs/screenshots/chat-report-extraction.png)
-![指标管理与录入](docs/screenshots/metric-input.png)
+> 以下为示例数据截图，为保护隐私，真实姓名均已脱敏处理。
+
+![健康画像看板](docs/screenshots/02-dashboard.jpg)
+
+![AI 咨询对话](docs/screenshots/03-chat.jpg)
+
+![报告管理](docs/screenshots/04-reports.jpg)
+
+![指标管理与录入](docs/screenshots/09-metric-input.jpg)
 
 ## 隐私声明
 

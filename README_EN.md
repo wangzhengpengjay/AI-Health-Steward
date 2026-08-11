@@ -152,9 +152,15 @@ AI-Health-Steward/
 
 ## Screenshots
 
-![Health Dashboard](docs/screenshots/dashboard-overview.png)
-![AI Chat Report Analysis](docs/screenshots/chat-report-extraction.png)
-![Metric Management](docs/screenshots/metric-input.png)
+> Screenshots below use sample data. Real names are anonymized to protect privacy.
+
+![Health Dashboard](docs/screenshots/02-dashboard.jpg)
+
+![AI Chat Consultation](docs/screenshots/03-chat.jpg)
+
+![Report Management](docs/screenshots/04-reports.jpg)
+
+![Metric Management](docs/screenshots/09-metric-input.jpg)
 
 ---
 
