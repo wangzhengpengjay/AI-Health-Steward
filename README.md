@@ -7,6 +7,9 @@
 > **产品定位：双入口协同。** WebUI 是家庭健康管理的**完整后台**（画像看板、报告管理、体检推荐、系统设置等深度能力）；飞书是日常高频的**轻入口**（随手丢报告、文字轻问答、快捷录入），尤其适合移动端随手使用。飞书侧重“便捷触达与资料收集”，WebUI 侧重“深度管理与完整闭环”，数据在两者间自动回流共享。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![在线介绍](https://img.shields.io/badge/%F0%9F%93%96%20%E5%9C%A8%E7%BA%BF%E4%BB%8B%E7%BB%8D-online-brightgreen)](https://wangzhengpengjay.github.io/AI-Health-Steward/)
+
+> 📖 **在线介绍页**：[wangzhengpengjay.github.io/AI-Health-Steward](https://wangzhengpengjay.github.io/AI-Health-Steward/) — 项目功能与产品理念的图形化落地页
 
 ## 特性
 

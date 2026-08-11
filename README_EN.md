@@ -9,6 +9,9 @@
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg)](backend)
 [![React](https://img.shields.io/badge/React-18-61DAFB.svg)](frontend)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](docker-compose.yml)
+[![Online Demo](https://img.shields.io/badge/Online%20Page-online-brightgreen)](https://wangzhengpengjay.github.io/AI-Health-Steward/)
+
+> 📖 **Online page**: [wangzhengpengjay.github.io/AI-Health-Steward](https://wangzhengpengjay.github.io/AI-Health-Steward/) — graphical landing page for features & vision
 
 [中文文档](README.md)
 
