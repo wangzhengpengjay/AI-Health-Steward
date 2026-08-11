@@ -301,6 +301,27 @@ async def generate_summary(
 
     stats = _build_stats(metrics)
     events = _build_events(metrics)
+
+    # No substantive content -> default empty page WITHOUT calling the LLM
+    # (no metrics updated, no abnormal/critical events, no new diagnoses/meds,
+    #  and no open to-dos needing action).
+    if not await _has_substantive_content(db, member_id, metrics, events, diagnoses, medications):
+        content = _render_empty(period, period_start, period_end)
+        summary = HealthSummary(
+            member_id=member_id,
+            summary_type="auto",
+            period=period,
+            period_start=period_start,
+            period_end=period_end,
+            stats_json=json.dumps(stats, ensure_ascii=False),
+            abnormal_events=json.dumps(events, ensure_ascii=False),
+            content=content,
+        )
+        db.add(summary)
+        await db.flush()
+        await db.refresh(summary)
+        return summary
+
     content = _render_markdown(period, period_start, period_end, stats, events, diagnoses, medications)
 
     # Optional LLM enrichment — best-effort, never blocks generation.
@@ -327,6 +348,48 @@ async def generate_summary(
     await db.flush()
     await db.refresh(summary)
     return summary
+
+
+async def _has_substantive_content(
+    db: AsyncSession, member_id: int, metrics: list, events: dict[str, Any],
+    diagnoses: list, medications: list,
+) -> bool:
+    """True if the period has anything worth a model-generated summary.
+
+    Skips the LLM and emits a default "no updates" page when the period is
+    empty: no metric records, no abnormal/critical events, no new
+    diagnoses/medications, AND no open to-dos waiting on this member.
+    """
+    if metrics or events.get("abnormal") or events.get("critical"):
+        return True
+    if diagnoses or medications:
+        return True
+    # Open to-dos needing the user's action count as content worth surfacing.
+    if db is not None:
+        try:
+            from app.models.tasks import HealthTask
+            res = await db.execute(
+                select(HealthTask.id).where(
+                    HealthTask.member_id == member_id,
+                    HealthTask.status == "open",
+                ).limit(1)
+            )
+            return res.scalars().first() is not None
+        except Exception:  # noqa: BLE001
+            return True  # fail-open: on query error, treat as has-content
+    return False
+
+
+def _render_empty(period: str, period_start: date, period_end: date) -> str:
+    """Default "no updates" page for an empty period (no LLM involved)."""
+    label = _PERIOD_LABELS.get(period, period)
+    return (
+        f"# {label}健康小结（{period_start.isoformat()} ~ {period_end.isoformat()}）\n\n"
+        "## 本周期无更新\n\n"
+        "本周期内没有新的指标记录，也没有待办事项需要处理。\n"
+        "继续保持健康的生活习惯即可。\n\n"
+        "*本小结由系统自动生成，仅供参考，不构成医疗建议。*\n"
+    )
 
 
 async def _get_recheck_suggestions(
