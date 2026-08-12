@@ -95,3 +95,52 @@ async def test_execute_tool_call_rolls_back_on_failure() -> None:
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
     assert result["error"] == "工具执行失败: boom"
+
+
+# ---------------------------------------------------------------------------
+# 方案A: 同轮收缩压+舒张压强制统一 measured_at (防前端拆成残缺记录)
+# ---------------------------------------------------------------------------
+from app.providers.base import ToolCall
+import json
+
+
+def _bp_call(metric_name: str, measured_at: str | None) -> ToolCall:
+    args = {"data_type": "metric", "metric_name": metric_name, "value": 100}
+    if measured_at is not None:
+        args["measured_at"] = measured_at
+    return ToolCall(id=metric_name, name="extract_and_save", arguments=json.dumps(args))
+
+
+class TestBpTimestampAlignment:
+    def test_same_round_systolic_diastolic_share_timestamp(self) -> None:
+        """同一轮同时提取收缩压+舒张压时, 两者 measured_at 必须一致. """
+        sys = _bp_call("systolic_blood_pressure", "2026-07-22T08:00:00")
+        dia = _bp_call("diastolic_blood_pressure", "2026-07-22T08:00:30")  # 时间戳不一致
+        ConsultationService._align_bp_measured_at([sys, dia])
+        a1 = json.loads(sys.arguments)
+        a2 = json.loads(dia.arguments)
+        assert a1["measured_at"] == a2["measured_at"]
+        # 优先取先出现的已给时间戳
+        assert a1["measured_at"] == "2026-07-22T08:00:00"
+
+    def test_single_side_not_modified(self) -> None:
+        """只有单侧血压(如只提收缩压)时不做对齐, 保留原值. """
+        sys = _bp_call("systolic_blood_pressure", "2026-07-22T08:00:00")
+        ConsultationService._align_bp_measured_at([sys])
+        assert json.loads(sys.arguments)["measured_at"] == "2026-07-22T08:00:00"
+
+    def test_missing_timestamp_filled_with_now(self) -> None:
+        """同轮双侧血压均无 measured_at 时, 统一填充当前时间. """
+        sys = _bp_call("systolic_blood_pressure", None)
+        dia = _bp_call("diastolic_blood_pressure", None)
+        ConsultationService._align_bp_measured_at([sys, dia])
+        a1 = json.loads(sys.arguments)["measured_at"]
+        a2 = json.loads(dia.arguments)["measured_at"]
+        assert a1 and a2
+        assert a1 == a2
+
+    def test_non_bp_metric_not_modified(self) -> None:
+        """非血压指标(如血糖)不受影响. """
+        glu = _bp_call("fasting_glucose", "2026-07-22T08:00:00")
+        ConsultationService._align_bp_measured_at([glu])
+        assert json.loads(glu.arguments)["measured_at"] == "2026-07-22T08:00:00"

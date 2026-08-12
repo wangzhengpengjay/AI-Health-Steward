@@ -195,6 +195,7 @@ class ConsultationService:
             ]
             messages.append(Message(role="assistant", content=response.content or "", tool_calls=tool_calls_oi))
 
+            self._align_bp_measured_at(response.tool_calls)
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc, member_id)
                 tool_call_records.append({"name": tc.name, "arguments": tc.arguments, "result": result})
@@ -265,6 +266,7 @@ class ConsultationService:
             ]
             messages.append(Message(role="assistant", content=response.content or "", tool_calls=tool_calls_oi))
 
+            self._align_bp_measured_at(response.tool_calls)
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc, member_id)
                 messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
@@ -470,6 +472,53 @@ class ConsultationService:
             messages.extend(history)
         messages.append(Message(role="user", content=user_message))
         return messages
+
+    BP_METRICS = ("systolic_blood_pressure", "diastolic_blood_pressure")
+
+    @staticmethod
+    def _align_bp_measured_at(tool_calls: list[ToolCall] | None) -> list[ToolCall] | None:
+        """同一轮工具调用中若同时提取收缩压+舒张压，强制两者使用同一个 measured_at。
+
+        血压作为两条独立 MetricRecord(收缩压/舒张压)存储，前端按 measured_at 精确配对合并展示。
+        若模型生成的两次提取时间戳不一致，会把同一组血压拆成两条残缺记录(如"收缩压 -- / 舒张压 90")。
+        此方法在保存前把同轮收缩压/舒张压的 measured_at 对齐为同一确定值，从源头防呆。
+        """
+        if not tool_calls:
+            return tool_calls
+
+        bp_calls: list[ToolCall] = []
+        for tc in tool_calls:
+            if tc.name != "extract_and_save":
+                continue
+            try:
+                args = json.loads(tc.arguments) if tc.arguments else {}
+            except json.JSONDecodeError:
+                continue
+            if args.get("data_type") != "metric":
+                continue
+            if args.get("metric_name") in ConsultationService.BP_METRICS:
+                bp_calls.append(tc)
+
+        # 仅当同轮同时覆盖收缩压和舒张压时才需要对齐
+        names = {json.loads(tc.arguments).get("metric_name") for tc in bp_calls}
+        if not {"systolic_blood_pressure", "diastolic_blood_pressure"}.issubset(names):
+            return tool_calls
+
+        # 统一时间戳：优先用已给的合法测量时间，否则用当前时间
+        unified = None
+        for tc in bp_calls:
+            args = json.loads(tc.arguments)
+            if args.get("measured_at"):
+                unified = args["measured_at"]
+                break
+        if unified is None:
+            unified = datetime.now(timezone.utc).isoformat()
+
+        for tc in bp_calls:
+            args = json.loads(tc.arguments)
+            args["measured_at"] = unified
+            tc.arguments = json.dumps(args, ensure_ascii=False)
+        return tool_calls
 
     async def _execute_tool_call(self, tc: ToolCall, member_id: int) -> dict[str, Any]:
         tool = self.tools.get_tool(tc.name)
