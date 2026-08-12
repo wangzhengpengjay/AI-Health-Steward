@@ -74,6 +74,45 @@ class TestLoadRecentHistory:
         assert where is not None
 
 
+class TestBuildMessagesPlanA:
+    """方案A: 历史对话合并为一条带标题 user 消息, 本次输入单独一条带标题."""
+
+    def _svc(self) -> ConsultationService:
+        return ConsultationService.__new__(ConsultationService)
+
+    def test_history_merged_with_title_and_user_input_titled(self) -> None:
+        svc = self._svc()
+        history = [
+            Message(role="assistant", content="回复1"),
+            Message(role="user", content="问题2"),
+        ]
+        messages = svc._build_messages("本次问题", "系统提示", history)
+
+        # [system, history(user), current(user)]
+        assert len(messages) == 3
+        assert messages[0].role == "system"
+        assert messages[0].content == "系统提示"
+
+        # 历史对话: 一条 user, 前缀【用户历史对话】, 逐条带 [role] 标
+        assert messages[1].role == "user"
+        assert messages[1].content.startswith("【用户历史对话】\n")
+        assert "[assistant] 回复1" in messages[1].content
+        assert "[user] 问题2" in messages[1].content
+
+        # 本次输入: 一条 user, 前缀【用户本次输入问题】
+        assert messages[2].role == "user"
+        assert messages[2].content == "【用户本次输入问题】\n本次问题"
+
+    def test_no_history_still_uses_user_title(self) -> None:
+        svc = self._svc()
+        messages = svc._build_messages("本次问题", "系统提示", None)
+
+        assert len(messages) == 2  # system + 本次输入
+        assert messages[0].role == "system"
+        assert messages[1].role == "user"
+        assert messages[1].content == "【用户本次输入问题】\n本次问题"
+
+
 class TestChatHistoryEndpoint:
     """The /chat/history endpoint returns the member's full webui history."""
 

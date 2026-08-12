@@ -448,14 +448,14 @@ class ConsultationService:
         """Load the member's persisted webui history as LLM context.
 
         The webui is a single continuous conversation stream per member. We load the
-        most recent 50 messages (capped) so the model can continue the previous
+        most recent 10 messages (capped) so the model can continue the previous
         conversation across sessions, not just the last 30 minutes.
         """
         result = await self.db.execute(
             select(ChatMessage)
             .where(ChatMessage.member_id == member_id, ChatMessage.source == "webui")
             .order_by(ChatMessage.id.desc())
-            .limit(50)
+            .limit(10)
         )
         rows = list(result.scalars().all())
         rows.reverse()  # back to ascending order for the context window
@@ -478,10 +478,17 @@ class ConsultationService:
         system_prompt: str,
         history: list[Message] | None,
     ) -> list[Message]:
+        """Build the model message array (方案A):
+
+        - system 提示词在前
+        - 历史对话合并为一条 user 消息, 内容前缀标题【用户历史对话】(区分 user/assistant 角色)
+        - 本次输入单独一条 user 消息, 内容前缀标题【用户本次输入问题】
+        """
         messages: list[Message] = [Message(role="system", content=system_prompt)]
         if history:
-            messages.extend(history)
-        messages.append(Message(role="user", content=user_message))
+            history_text = "\n".join(f"[{r.role}] {r.content}" for r in history)
+            messages.append(Message(role="user", content=f"【用户历史对话】\n{history_text}"))
+        messages.append(Message(role="user", content=f"【用户本次输入问题】\n{user_message}"))
         return messages
 
     BP_METRICS = ("systolic_blood_pressure", "diastolic_blood_pressure")
