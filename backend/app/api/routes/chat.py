@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import rate_limited
 from app.models.family import FamilyMember
+from app.models.health import ChatMessage
 from app.providers.router import ModelRouter, ProviderNotConfiguredError, get_model_router
 from app.services.consultation import ConsultationService
 from app.services.tools.registry import ToolRegistry
@@ -41,6 +42,18 @@ class ChatResponse(BaseModel):
     reply: str
     tool_calls: list[ToolCallRecord]
     risk_level: str
+
+
+class HistoryMessage(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: str
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[HistoryMessage]
+    has_more: bool = False
 
 
 def _file_to_data_url(file: UploadFile) -> str:
@@ -80,6 +93,36 @@ async def _ensure_member(db: AsyncSession, member_id: int) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"FamilyMember {member_id} not found",
         )
+
+
+@router.get("/{member_id}/chat/history", response_model=ChatHistoryResponse)
+async def chat_history(
+    member_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> ChatHistoryResponse:
+    """Return the member's persisted webui chat history (ascending).
+
+    The webui is a single continuous conversation stream per member, so we load
+    the full webui history so the page can restore the previous conversation on
+    every visit.
+    """
+    await _ensure_member(db, member_id)
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.member_id == member_id, ChatMessage.source == "webui")
+        .order_by(ChatMessage.id.asc())
+    )
+    rows = result.scalars().all()
+    messages = [
+        HistoryMessage(
+            id=r.id,
+            role=r.role,
+            content=r.content,
+            created_at=r.created_at.isoformat() if r.created_at else "",
+        )
+        for r in rows
+    ]
+    return ChatHistoryResponse(messages=messages)
 
 
 @router.post("/{member_id}/chat", response_model=ChatResponse)

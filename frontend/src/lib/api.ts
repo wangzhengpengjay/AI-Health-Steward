@@ -96,7 +96,24 @@ export type { ApiResponse, FamilyMember, MetricRecord }
 
 // ===== Chat API =====
 
+interface HistoryMessage {
+  id: number
+  role: string
+  content: string
+  created_at: string
+}
+
 export const chatApi = {
+  getHistory: async (memberId: number): Promise<HistoryMessage[]> => {
+    const res = await fetch(`${BASE_URL}/members/${memberId}/chat/history`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status)
+    }
+    const data = await res.json()
+    return data.messages ?? []
+  },
+
   send: async (memberId: number, message: string, file?: File): Promise<ChatResponse> => {
     const formData = new FormData()
     formData.append('message', message)

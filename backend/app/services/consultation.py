@@ -438,16 +438,20 @@ class ConsultationService:
         }
 
     async def _load_recent_history(self, member_id: int, source: str = "webui") -> list[Message]:
-        """Load chat history from last 30 minutes."""
-        from datetime import datetime, timedelta, timezone
-        cutoff = datetime.now(timezone(timedelta(hours=8))) - timedelta(minutes=30)
+        """Load the member's persisted webui history as LLM context.
+
+        The webui is a single continuous conversation stream per member. We load the
+        most recent 50 messages (capped) so the model can continue the previous
+        conversation across sessions, not just the last 30 minutes.
+        """
         result = await self.db.execute(
             select(ChatMessage)
-            .where(ChatMessage.member_id == member_id, ChatMessage.created_at >= cutoff)
-            .order_by(ChatMessage.created_at.asc())
-            .limit(20)
+            .where(ChatMessage.member_id == member_id, ChatMessage.source == "webui")
+            .order_by(ChatMessage.id.desc())
+            .limit(50)
         )
-        rows = result.scalars().all()
+        rows = list(result.scalars().all())
+        rows.reverse()  # back to ascending order for the context window
         return [Message(role=r.role, content=r.content) for r in rows]
 
     async def _save_message(self, member_id: int, role: str, content: str, source: str = "webui") -> None:

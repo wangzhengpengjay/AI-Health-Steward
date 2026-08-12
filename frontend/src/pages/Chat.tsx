@@ -8,6 +8,7 @@ import ReportConfirmModal from '@/components/ReportConfirmModal'
 export default function Chat() {
   const { currentMemberId, members } = useMemberStore()
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
@@ -21,6 +22,33 @@ export default function Chat() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentMember = members.find((m) => m.id === currentMemberId)
+
+  // Load persisted chat history when entering the page or switching members.
+  useEffect(() => {
+    if (!currentMemberId) return
+    let cancelled = false
+    setIsLoadingHistory(true)
+    chatApi
+      .getHistory(Number(currentMemberId))
+      .then((history) => {
+        if (cancelled) return
+        const restored: ChatMessage[] = history.map((h) => ({
+          role: h.role as 'user' | 'assistant',
+          content: h.content,
+          timestamp: h.created_at || new Date().toISOString(),
+        }))
+        setMessages(restored)
+      })
+      .catch(() => {
+        if (!cancelled) setMessages([])
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingHistory(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentMemberId])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -187,7 +215,15 @@ export default function Chat() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-bg-secondary px-6 py-4">
-        {messages.length === 0 && !isStreaming && (
+        {isLoadingHistory && (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex items-center gap-2 text-slate-400">
+              <span className="material-symbols-rounded animate-spin">progress_activity</span>
+              <span className="text-sm">正在加载历史对话...</span>
+            </div>
+          </div>
+        )}
+        {messages.length === 0 && !isLoadingHistory && !isStreaming && (
           <div className="flex h-full items-center justify-center">
             <div className="max-w-md text-center">
               <span className="material-symbols-rounded text-5xl text-slate-300">chat_bubble_outline</span>
