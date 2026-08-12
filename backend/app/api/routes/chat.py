@@ -1,6 +1,7 @@
 """Chat endpoints for AI health consultations."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -11,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import async_session_factory, get_db
 from app.core.security import rate_limited
 from app.models.family import FamilyMember
 from app.models.health import ChatMessage
@@ -21,6 +22,23 @@ from app.services.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/members", tags=["chat"])
+
+
+async def _compress_memory_in_background(member_id: int, router: ModelRouter) -> None:
+    """后台压缩长期记忆: 使用独立 DB session, 不占用 SSE 连接/请求 session.
+
+    流式咨询把 delta 全部推给前端后会立即发 [DONE] 并关闭连接;
+    长期记忆压缩(maybe_compact_memory 内部会调用 LLM, 可能耗时数秒~十几秒)
+    绝不可阻塞流式收尾, 因此在后台独立运行.
+    """
+    try:
+        async with async_session_factory() as db:
+            from app.services.member_memory import maybe_compact_memory
+
+            await maybe_compact_memory(db, router, member_id, "webui")
+            await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Background memory compaction failed for member %s", member_id)
 
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -212,7 +230,13 @@ async def chat_stream(
             logger.exception("Stream chat failed")
             err = json.dumps({"error": f"AI 服务暂时不可用: {e}"}, ensure_ascii=False)
             yield f"data: {err}\n\n"
+        # 先发送 [DONE] 解除前端"持续输出"状态; 长期记忆压缩走后台任务,
+        # 不阻塞流式收尾, 连接在 DONE 后立即关闭.
         yield "data: [DONE]\n\n"
+        try:
+            asyncio.create_task(_compress_memory_in_background(member_id, model_router))
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not schedule background memory compaction for member %s", member_id)
 
     return StreamingResponse(
         event_generator(),

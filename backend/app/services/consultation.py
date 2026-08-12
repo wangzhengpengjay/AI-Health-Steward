@@ -257,7 +257,6 @@ class ConsultationService:
                     full_reply.append(delta)
                     yield ("delta", delta)
                 await self._save_message(member_id, "assistant", "".join(full_reply), source)
-                await self._after_turn(member_id, source)
                 return
 
             tool_calls_oi = [
@@ -276,7 +275,6 @@ class ConsultationService:
             full_reply.append(delta)
             yield ("delta", delta)
         await self._save_message(member_id, "assistant", "".join(full_reply), source)
-        await self._after_turn(member_id, source)
 
     # ------------------------------------------------------------------
     # Internal helpers
