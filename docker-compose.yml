@@ -23,6 +23,11 @@ services:
       dockerfile: Dockerfile
     container_name: health-steward-backend
     env_file: backend/.env
+    environment:
+      # Docker Desktop / bind mount 下 watchfiles 的文件事件监听不可靠,
+      # 会导致 uvicorn --reload 检测不到代码变化(reload 后仍跑旧代码,
+      # 流式 SSE 缺失 [DONE] 使前端卡在"持续输出"). 强制轮询以根治.
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     volumes:
