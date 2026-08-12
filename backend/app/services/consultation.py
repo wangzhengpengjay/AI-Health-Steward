@@ -455,9 +455,15 @@ class ConsultationService:
         return [Message(role=r.role, content=r.content) for r in rows]
 
     async def _save_message(self, member_id: int, role: str, content: str, source: str = "webui") -> None:
-        """Persist a chat message for future history."""
+        """Persist a chat message for future history.
+
+        显式 commit: SSE /chat/stream 里 get_db 依赖尾部 commit 不可靠
+        (客户端断开/取消时会被跳过或回滚), 导致 assistant 回复不入库,
+        切页再回来历史里就看不到本次对话. 这里统一落库保证 history 完整.
+        """
         self.db.add(ChatMessage(member_id=member_id, role=role, content=content, source=source))
         await self.db.flush()
+        await self.db.commit()
 
     def _build_messages(
         self,
