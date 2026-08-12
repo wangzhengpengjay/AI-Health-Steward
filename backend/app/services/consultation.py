@@ -477,9 +477,14 @@ class ConsultationService:
             return {"error": f"工具参数解析失败: {tc.arguments}"}
         try:
             result = await tool.execute(self.db, member_id, **arguments)
-            await self.db.flush()
+            # 工具执行是真实的状态变更(保存指标/症状/用药/待办), 必须立即提交持久化.
+            # 非流式 /chat 依赖请求尾部的 get_db.commit() 能落库, 但 SSE 流式 /chat/stream 的
+            # event_generator 在 StreamingResponse 里用 session, 依赖清理时的 commit 不可靠,
+            # 会导致工具保存的数据被回滚丢弃. 因此在工具执行后显式提交.
+            await self.db.commit()
             return result
         except Exception as exc:
+            await self.db.rollback()
             logger.exception("Tool %s execution failed", tc.name)
             return {"error": f"工具执行失败: {exc}"}
 
