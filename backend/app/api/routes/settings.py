@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.models.assessments import ScaleResult
 from app.models.family import FamilyMember
 from app.models.health import (
     Allergy,
+    ChatMessage,
     CheckupReport,
     Diagnosis,
     FamilyHistory,
@@ -26,6 +28,8 @@ from app.models.health import (
     MetricRecord,
     ReportRecord,
 )
+from app.models.summaries import HealthSummary
+from app.models.tasks import HealthTask
 from app.providers.router import ModelRouter, get_model_router
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -40,6 +44,10 @@ _EXPORT_MODELS = {
     "family_history": FamilyHistory,
     "report_records": ReportRecord,
     "checkup_reports": CheckupReport,
+    "scale_results": ScaleResult,
+    "chat_messages": ChatMessage,
+    "health_summaries": HealthSummary,
+    "health_tasks": HealthTask,
 }
 
 

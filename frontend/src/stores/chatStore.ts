@@ -31,6 +31,7 @@ interface ChatStoreState {
   setPendingReport: (memberId: number, report: ReportRecord | null) => void
   setExtractingReport: (memberId: number, extracting: boolean) => void
   setError: (memberId: number, error: string | null) => void
+  clearAll: () => void
 }
 
 export const useChatStore = create<ChatStoreState>((set) => {
@@ -61,5 +62,6 @@ export const useChatStore = create<ChatStoreState>((set) => {
     setPendingReport: (memberId, report) => patch(memberId, { pendingReport: report }),
     setExtractingReport: (memberId, extracting) => patch(memberId, { extractingReport: extracting }),
     setError: (memberId, error) => patch(memberId, { error }),
+    clearAll: () => set({ members: {} }),
   }
 })

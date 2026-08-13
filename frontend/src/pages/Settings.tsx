@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, feishuApi, membersApi, type ProviderConfig, type ProviderUpdatePayload, type FeishuChannel } from '@/lib/api'
+import { useChatStore } from '@/stores/chatStore'
 
 interface EditState {
   multimodal_api_base: string
@@ -79,6 +80,9 @@ export default function Settings() {
     onSuccess: (data) => {
       setWipeResult(data.message)
       setShowWipeConfirm(false)
+      // Clear all cached queries and chat store
+      queryClient.invalidateQueries()
+      useChatStore.getState().clearAll?.()
     },
   })
 
