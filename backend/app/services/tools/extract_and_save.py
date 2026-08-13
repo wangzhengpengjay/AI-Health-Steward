@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.family import FamilyMember
 from app.models.health import Lifestyle, MetricRecord
 from app.services.tools.base import HealthTool
+from app.services.extraction_rules import ALLOWED_METRIC_NAMES, METRIC_NAME_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ class ExtractAndSaveTool(HealthTool):
             },
             "metric_name": {
                 "type": "string",
-                "description": "指标名称（data_type=metric时必填），如 systolic_blood_pressure",
+                "enum": sorted(ALLOWED_METRIC_NAMES),
+                "description": "指标名称（data_type=metric时必填）。血糖映射：空腹=fasting_glucose、餐后1h=postmeal_1h_glucose、餐后2h=postmeal_glucose、睡前=bedtime_glucose、未明确状态=random_glucose",
             },
             "value": {
                 "type": "number",
@@ -80,6 +82,13 @@ class ExtractAndSaveTool(HealthTool):
                 "saved": False,
                 "data_type": "metric",
                 "error": "metric_name 和 value 为必填项",
+            }
+        metric_name = METRIC_NAME_ALIASES.get(metric_name, metric_name)
+        if metric_name not in ALLOWED_METRIC_NAMES:
+            return {
+                "saved": False,
+                "data_type": "metric",
+                "error": f"不支持的指标名称：{metric_name}",
             }
 
         measured_at_str = kwargs.get("measured_at")

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMemberStore } from '@/stores/memberStore'
+import { useChatStore } from '@/stores/chatStore'
 import { chatApi, type ReportRecord } from '@/lib/api'
 import type { ChatMessage } from '@/types'
 import ChatBubble from '@/components/ChatBubble'
@@ -7,16 +8,27 @@ import ReportConfirmModal from '@/components/ReportConfirmModal'
 
 export default function Chat() {
   const { currentMemberId, members } = useMemberStore()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const memberId = currentMemberId ? Number(currentMemberId) : null
+  const memberChat = useChatStore((s) => (memberId != null ? s.members[memberId] : undefined))
+  const {
+    setHistory,
+    appendMessage,
+    setStreaming,
+    setStreamingContent,
+    setPendingReport,
+    setExtractingReport,
+    setError,
+  } = useChatStore()
+  const messages = memberChat?.messages ?? []
+  const isStreaming = memberChat?.isStreaming ?? false
+  const streamingContent = memberChat?.streamingContent ?? ''
+  const error = memberChat?.error ?? null
+  const pendingReport = memberChat?.pendingReport ?? null
+  const extractingReport = memberChat?.extractingReport ?? false
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [streamingContent, setStreamingContent] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [pendingReport, setPendingReport] = useState<ReportRecord | null>(null)
-  const [extractingReport, setExtractingReport] = useState(false)
   const [showReportModal, setShowReportModal] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -26,10 +38,12 @@ export default function Chat() {
   // Load persisted chat history when entering the page or switching members.
   useEffect(() => {
     if (!currentMemberId) return
+    const id = Number(currentMemberId)
+    if (useChatStore.getState().members[id]?.historyLoaded) return
     let cancelled = false
     setIsLoadingHistory(true)
     chatApi
-      .getHistory(Number(currentMemberId))
+      .getHistory(id)
       .then((history) => {
         if (cancelled) return
         const restored: ChatMessage[] = history.map((h) => ({
@@ -37,10 +51,10 @@ export default function Chat() {
           content: h.content,
           timestamp: h.created_at || new Date().toISOString(),
         }))
-        setMessages(restored)
+        setHistory(id, restored)
       })
       .catch(() => {
-        if (!cancelled) setMessages([])
+        if (!cancelled) setHistory(id, [])
       })
       .finally(() => {
         if (!cancelled) setIsLoadingHistory(false)
@@ -59,15 +73,15 @@ export default function Chat() {
     if (!file) return
     const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
     if (!validTypes.includes(file.type)) {
-      setError('仅支持 JPG/PNG/WebP/PDF 格式')
+      if (memberId != null) setError(memberId, '仅支持 JPG/PNG/WebP/PDF 格式')
       return
     }
     if (file.size > 20 * 1024 * 1024) {
-      setError('文件大小不能超过 20MB')
+      if (memberId != null) setError(memberId, '文件大小不能超过 20MB')
       return
     }
     setAttachedFile(file)
-    setError(null)
+    if (memberId != null) setError(memberId, null)
     if (file.type.startsWith('image/')) {
       setPreviewUrl(URL.createObjectURL(file))
     } else {
@@ -94,15 +108,15 @@ export default function Chat() {
         if (!file) return
         const validTypes = ['image/jpeg', 'image/png', 'image/webp']
         if (!validTypes.includes(file.type)) {
-          setError('粘贴的图片格式不支持，仅支持 JPG/PNG/WebP')
+          if (memberId != null) setError(memberId, '粘贴的图片格式不支持，仅支持 JPG/PNG/WebP')
           return
         }
         if (file.size > 20 * 1024 * 1024) {
-          setError('粘贴的图片超过 20MB 限制')
+          if (memberId != null) setError(memberId, '粘贴的图片超过 20MB 限制')
           return
         }
         setAttachedFile(file)
-        setError(null)
+        if (memberId != null) setError(memberId, null)
         setPreviewUrl(URL.createObjectURL(file))
         break
       }
@@ -112,9 +126,10 @@ export default function Chat() {
   const handleSend = async () => {
     if ((!input.trim() && !attachedFile) || isStreaming) return
     if (!currentMemberId) {
-      setError('请先选择家庭成员')
+      if (memberId != null) setError(memberId, '请先选择家庭成员')
       return
     }
+    const id = Number(currentMemberId)
 
     const userContent = input.trim() || (attachedFile ? '请帮我解读这份报告' : '')
     const userMsg: ChatMessage = {
@@ -127,32 +142,32 @@ export default function Chat() {
     } else if (attachedFile) {
       userMsg.content = `${userContent}\n[文件: ${attachedFile.name}]`
     }
-    setMessages((prev) => [...prev, userMsg])
+    appendMessage(id, userMsg)
     const userInput = input.trim()
     const fileToSend = attachedFile
     setInput('')
     handleRemoveFile()
-    setError(null)
-    setIsStreaming(true)
-    setStreamingContent('')
-    if (fileToSend) setExtractingReport(true)
+    setError(id, null)
+    setStreaming(id, true)
+    setStreamingContent(id, '')
+    if (fileToSend) setExtractingReport(id, true)
 
     try {
       let fullContent = ''
-      for await (const chunk of chatApi.stream(Number(currentMemberId), userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
+      for await (const chunk of chatApi.stream(id, userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
         if (chunk.type === 'delta') {
           fullContent += chunk.data
-          setStreamingContent(fullContent)
-       } else if (chunk.type === 'report') {
-         try {
-           const report = JSON.parse(chunk.data) as ReportRecord
-           if (report.status === 'pending') {
-             setPendingReport(report)
-             setExtractingReport(false)
-           }
-         } catch (e) {
-           console.error('Failed to parse report event:', e)
-         }
+          setStreamingContent(id, fullContent)
+        } else if (chunk.type === 'report') {
+          try {
+            const report = JSON.parse(chunk.data) as ReportRecord
+            if (report.status === 'pending') {
+              setPendingReport(id, report)
+              setExtractingReport(id, false)
+            }
+          } catch (e) {
+            console.error('Failed to parse report event:', e)
+          }
         } else if (chunk.type === 'error') {
           throw new Error(chunk.data)
         }
@@ -163,20 +178,20 @@ export default function Chat() {
         content: fullContent || '(空回复)',
         timestamp: new Date().toISOString(),
       }
-      setMessages((prev) => [...prev, aiMsg])
+      appendMessage(id, aiMsg)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'AI 服务暂时不可用'
-      setError(errorMsg)
+      setError(id, errorMsg)
       const aiMsg: ChatMessage = {
         role: 'assistant',
         content: `抱歉，处理您的请求时出错了：${errorMsg}。请稍后重试。`,
         timestamp: new Date().toISOString(),
       }
-      setMessages((prev) => [...prev, aiMsg])
+      appendMessage(id, aiMsg)
     } finally {
-      setIsStreaming(false)
-      setStreamingContent('')
-      setExtractingReport(false)
+      setStreaming(id, false)
+      setStreamingContent(id, '')
+      setExtractingReport(id, false)
     }
   }
 
@@ -306,7 +321,7 @@ export default function Chat() {
               确认入档
             </button>
             <button
-              onClick={() => setPendingReport(null)}
+              onClick={() => { if (memberId != null) setPendingReport(memberId, null) }}
               className="rounded-field p-1 text-slate-400 hover:text-slate-600"
             >
               <span className="material-symbols-rounded text-base">close</span>
@@ -355,7 +370,7 @@ export default function Chat() {
         <ReportConfirmModal
           report={pendingReport}
           uploadSource="chat"
-          onClose={() => { setShowReportModal(false); setPendingReport(null) }}
+          onClose={() => { setShowReportModal(false); if (memberId != null) setPendingReport(memberId, null) }}
         />
       )}
     </div>

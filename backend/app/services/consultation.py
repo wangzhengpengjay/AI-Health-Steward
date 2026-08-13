@@ -57,8 +57,10 @@ SYSTEM_PROMPT = """\
 当用户在对话中提到自己的健康指标数值（如"我血压180/90"、"空腹血糖6.5"等），你必须：
 1. 立即调用 extract_and_save 工具将提到的指标保存到画像
 2. 血压需要分别提取收缩压(systolic_blood_pressure)和舒张压(diastolic_blood_pressure)两条记录
-3. 保存后再基于该数据进行分析和回复
-4. 在回复中告知用户数据已记录
+3. 血糖必须使用标准标识：空腹 fasting_glucose、餐后1h postmeal_1h_glucose、餐后2h postmeal_glucose、睡前 bedtime_glucose。用户说"餐后2h血糖/餐后血糖"一律用 postmeal_glucose；用户只说"血糖"且未明确餐前/餐后/睡前状态时，一律用 random_glucose
+4. 保存后再基于该数据进行分析和回复
+5. 在回复中告知用户数据已记录
+6. 用户以"我...是X"的句式给出新测量值时，一律视为新测量，必须先调用工具落库；不能仅凭历史记录声称"已记录"而跳过工具调用。只有用户明确是在询问或确认旧值时，才不重复保存
 不要只回复建议而遗漏数据记录。
 
 提取边界（务必遵守，避免重复污染）：
@@ -98,7 +100,7 @@ EXTRACT_PROMPT = """\
   "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
   "metrics": [
     {
-      "metric_name": "指标标识符，只能使用以下固定指标之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, random_glucose, postmeal_1h_glucose, bedtime_glucose, heart_rate, weight, bmi。其他任何指标一律不得放入 metrics，必须按医学规则归入 lab_tests 或 exam_findings",
+      "metric_name": "指标标识符，只能使用以下固定指标之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, random_glucose, postmeal_1h_glucose, bedtime_glucose, heart_rate, weight, bmi。血糖映射：空腹血糖=fasting_glucose、餐后1h=postmeal_1h_glucose、餐后2h=postmeal_glucose、睡前=bedtime_glucose、未明确状态=random_glucose。其他任何指标一律不得放入 metrics，必须按医学规则归入 lab_tests 或 exam_findings",
       "label": "报告中显示的指标中文名",
       "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",

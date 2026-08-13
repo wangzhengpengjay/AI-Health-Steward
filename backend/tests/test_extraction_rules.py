@@ -42,3 +42,11 @@ def test_normalize_extraction_moves_ecg_to_exam():
         "unit": "ms",
         "conclusion": None,
     }]
+
+
+def test_filter_metrics_normalizes_glucose_alias():
+    result = filter_metrics([
+        {"metric_name": "postprandial_glucose_2h", "value": 7.9},
+        {"metric_name": "random_glucose", "value": 8.0},
+    ])
+    assert [m["metric_name"] for m in result] == ["postmeal_glucose", "random_glucose"]

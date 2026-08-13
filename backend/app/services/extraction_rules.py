@@ -25,10 +25,22 @@ ECG_METRIC_LABELS = {
     "cardiac_axis": "心电轴",
 }
 
+METRIC_NAME_ALIASES = {
+    "postprandial_glucose": "postmeal_glucose",
+    "postprandial_glucose_2h": "postmeal_glucose",
+    "postprandial_2h_glucose": "postmeal_glucose",
+}
+
 
 def filter_metrics(metrics: list[dict]) -> list[dict]:
     """Keep only fixed-tab metric names; everything else must go to lab/exam."""
-    return [m for m in metrics if m.get("metric_name") in ALLOWED_METRIC_NAMES]
+    normalized = []
+    for m in metrics:
+        item = dict(m)
+        item["metric_name"] = METRIC_NAME_ALIASES.get(item.get("metric_name"), item.get("metric_name"))
+        if item["metric_name"] in ALLOWED_METRIC_NAMES:
+            normalized.append(item)
+    return normalized
 
 
 def normalize_extraction(data: dict) -> dict:

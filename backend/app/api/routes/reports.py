@@ -47,7 +47,7 @@ EXTRACT_PROMPT = """\
   "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
   "metrics": [
     {
-      "metric_name": "指标标识符，只能使用以下固定指标之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, random_glucose, postmeal_1h_glucose, bedtime_glucose, heart_rate, weight, bmi。其他任何指标一律不得放入 metrics，必须按医学规则归入 lab_tests 或 exam_findings",
+      "metric_name": "指标标识符，只能使用以下固定指标之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, random_glucose, postmeal_1h_glucose, bedtime_glucose, heart_rate, weight, bmi。血糖映射：空腹血糖=fasting_glucose、餐后1h=postmeal_1h_glucose、餐后2h=postmeal_glucose、睡前=bedtime_glucose、未明确状态=random_glucose。其他任何指标一律不得放入 metrics，必须按医学规则归入 lab_tests 或 exam_findings",
       "label": "报告中显示的指标中文名",
       "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
