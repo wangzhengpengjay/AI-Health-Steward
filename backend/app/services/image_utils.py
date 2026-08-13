@@ -83,7 +83,7 @@ def prepare_for_multimodal(raw: bytes, mime: str) -> list[str]:
 # 多模态 API 单轮图片数上限(实测确定 = 4)。
 # 多页 PDF 会每页转一张图, 一次发送过多会触发 code 10043 "image count in one round exceeds limit"。
 # 实测: 4 张成功, 5 张失败 -> 上限为 4。
-MAX_IMAGES_PER_ROUND = 4
+MAX_IMAGES_PER_ROUND = 1
 
 # 提取 JSON 中需要合并去重的数组字段(按内容去重, 忽略顺序)
 _LIST_FIELDS = ["metrics", "diagnoses", "medications", "lab_tests", "exam_findings"]

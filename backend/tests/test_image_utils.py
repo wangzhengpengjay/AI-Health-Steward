@@ -81,16 +81,16 @@ def test_prepare_unknown_mime_treated_as_image():
 def test_chunk_data_urls_splits_over_limit():
     urls = [f"data:image/jpeg;base64,{i}" for i in range(15)]
     batches = chunk_data_urls(urls)
-    assert [len(b) for b in batches] == [4, 4, 4, 3]
+    assert [len(b) for b in batches] == [1] * 15
     assert sum(len(b) for b in batches) == 15
     assert all(len(b) <= MAX_IMAGES_PER_ROUND for b in batches)
 
 
 def test_chunk_data_urls_under_limit_single_batch():
-    urls = [f"u{i}" for i in range(3)]
+    urls = [f"u{i}" for i in range(1)]
     batches = chunk_data_urls(urls)
     assert len(batches) == 1
-    assert len(batches[0]) == 3
+    assert len(batches[0]) == 1
 
 
 def test_merge_extractions_dedupes_lists_and_takes_first_scalar():
@@ -137,5 +137,4 @@ def test_merge_extractions_single_batch_returns_as_is():
 
 
 def test_max_images_per_round_constant_defined():
-# 实测确定: 多模态单轮 4 张成功, 5 张超限(code 10043)
-    assert MAX_IMAGES_PER_ROUND == 4
+    assert MAX_IMAGES_PER_ROUND == 1
