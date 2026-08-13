@@ -100,20 +100,60 @@ def chunk_data_urls(urls: list[str], batch_size: int = MAX_IMAGES_PER_ROUND) -> 
     return [urls[i : i + batch_size] for i in range(0, len(urls), batch_size)]
 
 
-def _dedupe(items: list) -> list:
-    """Deduplicate list of dicts (or scalars) while preserving order."""
-    seen = set()
-    out = []
+def _dedupe(items: list, key_field: str | None = None) -> list:
+    """Deduplicate list of dicts by a key field (or full content if key_field is None).
+
+    When key_field is provided, items with the same key_field value are merged:
+    the one with more non-null fields is kept, and text fields are concatenated
+    if they differ.
+    """
+    if not key_field:
+        # Fall back to full-content dedupe
+        seen = set()
+        out = []
+        for it in items:
+            if isinstance(it, dict):
+                key = tuple(sorted((k, str(v)) for k, v in it.items()))
+            else:
+                key = (str(it),)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+        return out
+
+    # Dedupe by key_field, merge richer items
+    by_key: dict[str, dict] = {}
+    order: list[str] = []
     for it in items:
-        if isinstance(it, dict):
-            key = tuple(sorted((k, str(v)) for k, v in it.items()))
-        else:
-            key = (str(it),)
-        if key in seen:
+        if not isinstance(it, dict) or key_field not in it:
+            # Non-dict or missing key: keep as-is via content dedupe
+            k = json.dumps(it, ensure_ascii=False, sort_keys=True) if isinstance(it, dict) else str(it)
+            if k not in by_key:
+                by_key[k] = it  # type: ignore
+                order.append(k)
             continue
-        seen.add(key)
-        out.append(it)
-    return out
+        k = str(it[key_field])
+        if k not in by_key:
+            by_key[k] = it
+            order.append(k)
+        else:
+            existing = by_key[k]
+            # Count non-null fields in each
+            existing_rich = sum(1 for v in existing.values() if v is not None and v != "" and v != 0)
+            new_rich = sum(1 for v in it.values() if v is not None and v != "" and v != 0)
+            if new_rich > existing_rich:
+                # Merge: carry over any non-null fields from existing that are null in new
+                for fk, fv in existing.items():
+                    if fv is not None and fv != "" and (it.get(fk) is None or it.get(fk) == ""):
+                        it[fk] = fv
+                by_key[k] = it
+            else:
+                # Merge: carry over any non-null fields from new that are null in existing
+                for fk, fv in it.items():
+                    if fv is not None and fv != "" and (existing.get(fk) is None or existing.get(fk) == ""):
+                        existing[fk] = fv
+    return [by_key[k] for k in order]
 
 
 def merge_extractions(batches: list[dict]) -> dict:
@@ -129,7 +169,14 @@ def merge_extractions(batches: list[dict]) -> dict:
         return batches[0]
 
     merged: dict = {}
-    # list fields: concat + dedupe
+    # list fields: concat + dedupe by key field
+    _KEY_FIELDS = {
+        "metrics": "metric_name",
+        "diagnoses": "disease_name",
+        "medications": "drug_name",
+        "lab_tests": "report_name",
+        "exam_findings": "finding_category",
+    }
     for field in _LIST_FIELDS:
         items = []
         for b in batches:
@@ -137,7 +184,7 @@ def merge_extractions(batches: list[dict]) -> dict:
             if isinstance(v, list):
                 items.extend(v)
         if items:
-            merged[field] = _dedupe(items)
+            merged[field] = _dedupe(items, key_field=_KEY_FIELDS.get(field))
         else:
             merged[field] = []
     # scalar fields: first non-null
