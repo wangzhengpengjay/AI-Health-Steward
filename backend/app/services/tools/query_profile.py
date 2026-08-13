@@ -1,4 +1,4 @@
-"""query_profile tool — fetch diagnoses, medications, allergies, lifestyle, family history."""
+"""query_profile tool — fetch member health profile sections on demand."""
 from __future__ import annotations
 
 from typing import Any
@@ -12,16 +12,18 @@ from app.models.health import (
     FamilyHistory,
     Lifestyle,
     Medication,
+    Surgery,
+    Vaccination,
 )
 from app.services.tools.base import HealthTool
 
 
 class QueryProfileTool(HealthTool):
-    """Query a member's diagnoses, medications, allergies, lifestyle, or family history."""
+    """Query a member's health profile sections."""
 
     name: str = "query_profile"
     description: str = (
-        "查询家庭成员的诊断记录、用药记录、过敏信息和生活方式。可指定查询类别。"
+        "查询家庭成员的健康画像：诊断、用药、过敏、生活方式、家族史、手术史、疫苗接种史。可指定查询类别。"
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -34,6 +36,8 @@ class QueryProfileTool(HealthTool):
                     "allergy",
                     "lifestyle",
                     "family_history",
+                    "surgery",
+                    "vaccination",
                 ],
                 "description": "查询类别",
             }
@@ -153,6 +157,49 @@ class QueryProfileTool(HealthTool):
                         "relation": r.relation,
                         "disease_name": r.disease_name,
                         "recorded_at": r.recorded_at.isoformat() if r.recorded_at else None,
+                    }
+                    for r in rows
+                ],
+                "count": len(rows),
+            }
+
+        if category == "surgery":
+            result = await db.execute(
+                select(Surgery)
+                .where(Surgery.member_id == member_id)
+                .order_by(Surgery.created_at.desc())
+            )
+            rows = result.scalars().all()
+            return {
+                "category": "surgery",
+                "records": [
+                    {
+                        "id": r.id,
+                        "surgery_name": r.surgery_name,
+                        "surgery_date": r.surgery_date.isoformat() if r.surgery_date else None,
+                        "hospital": r.hospital,
+                        "notes": r.notes,
+                    }
+                    for r in rows
+                ],
+                "count": len(rows),
+            }
+
+        if category == "vaccination":
+            result = await db.execute(
+                select(Vaccination)
+                .where(Vaccination.member_id == member_id)
+                .order_by(Vaccination.created_at.desc())
+            )
+            rows = result.scalars().all()
+            return {
+                "category": "vaccination",
+                "records": [
+                    {
+                        "id": r.id,
+                        "vaccine_name": r.vaccine_name,
+                        "dose_no": r.dose_no,
+                        "vaccinated_date": r.vaccinated_date.isoformat() if r.vaccinated_date else None,
                     }
                     for r in rows
                 ],

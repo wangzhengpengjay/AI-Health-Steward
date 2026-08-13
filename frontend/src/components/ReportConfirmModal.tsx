@@ -7,13 +7,17 @@ const METRIC_LABELS: Record<string, string> = {
   systolic_blood_pressure: '收缩压',
   diastolic_blood_pressure: '舒张压',
   fasting_glucose: '空腹血糖',
-  postmeal_glucose: '餐后血糖',
+  postmeal_glucose: '餐后2h血糖',
+  postmeal_1h_glucose: '餐后1h血糖',
+  random_glucose: '随机血糖',
+  bedtime_glucose: '睡前血糖',
   total_cholesterol: '总胆固醇',
   triglycerides: '甘油三酯',
   ldl_cholesterol: 'LDL-C',
   hdl_cholesterol: 'HDL-C',
   heart_rate: '心率',
   weight: '体重',
+  bmi: 'BMI',
 }
 
 interface Props {

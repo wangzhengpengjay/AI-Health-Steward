@@ -246,6 +246,9 @@ export const profileApi = {
   addDiagnosis: (memberId: number, data: { disease_name: string; severity?: string; diagnosed_date?: string; status?: string }) =>
     request<DiagnosisItem>(`/members/${memberId}/profile/diagnoses`, { method: 'POST', body: JSON.stringify(data) }),
 
+  updateDiagnosis: (memberId: number, id: number, data: { status?: string; severity?: string; diagnosed_date?: string }) =>
+    request<DiagnosisItem>(`/members/${memberId}/profile/diagnoses/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
   addMedication: (memberId: number, data: { drug_name: string; dosage: string; frequency: string; start_date?: string }) =>
     request<MedicationItem>(`/members/${memberId}/profile/medications`, { method: 'POST', body: JSON.stringify(data) }),
 
@@ -682,4 +685,3 @@ export const summariesApi = {
       body: JSON.stringify({ period }),
     }),
 }
-

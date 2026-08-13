@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { metricsApi, profileApi, tasksApi } from '@/lib/api'
+import { metricsApi, profileApi, tasksApi, type DiagnosisItem } from '@/lib/api'
 import { LabTabContent, ExamTimeline } from '@/components/MetricViews'
 import { useMemberStore } from '@/stores/memberStore'
 import type { MetricRecord } from '@/types'
@@ -9,13 +9,17 @@ const METRIC_LABELS: Record<string, { label: string; unit: string }> = {
   systolic_blood_pressure: { label: '收缩压', unit: 'mmHg' },
   diastolic_blood_pressure: { label: '舒张压', unit: 'mmHg' },
   fasting_glucose: { label: '空腹血糖', unit: 'mmol/L' },
-  postmeal_glucose: { label: '餐后血糖', unit: 'mmol/L' },
+  postmeal_glucose: { label: '餐后2h血糖', unit: 'mmol/L' },
+  postmeal_1h_glucose: { label: '餐后1h血糖', unit: 'mmol/L' },
+  random_glucose: { label: '随机血糖', unit: 'mmol/L' },
+  bedtime_glucose: { label: '睡前血糖', unit: 'mmol/L' },
   total_cholesterol: { label: '总胆固醇', unit: 'mmol/L' },
   triglycerides: { label: '甘油三酯', unit: 'mmol/L' },
   ldl_cholesterol: { label: 'LDL-C', unit: 'mmol/L' },
   hdl_cholesterol: { label: 'HDL-C', unit: 'mmol/L' },
   heart_rate: { label: '心率', unit: 'bpm' },
   weight: { label: '体重', unit: 'kg' },
+  bmi: { label: 'BMI', unit: 'kg/m²' },
 }
 
 const SEVERITY_LABELS: Record<string, string> = { mild: '轻度', moderate: '中度', severe: '重度' }
@@ -42,6 +46,12 @@ export default function Dashboard() {
 
   const deleteMutation = useMutation({
     mutationFn: ({ type, id }: { type: string; id: number }) => profileApi.deleteRecord(type, id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile', currentMemberId] }),
+  })
+
+  const statusMutation = useMutation({
+    mutationFn: ({ ids, status }: { ids: number[]; status: string }) =>
+      Promise.all(ids.map((id) => profileApi.updateDiagnosis(Number(currentMemberId), id, { status }))),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile', currentMemberId] }),
   })
 
@@ -117,6 +127,32 @@ export default function Dashboard() {
   const lifestyles = profile?.lifestyles ?? []
   const surgeries = profile?.surgeries ?? []
   const vaccinations = profile?.vaccinations ?? []
+
+  // 同病去重：展示最早诊断时间，状态切换同步到该疾病的所有记录
+  const diagnosisGroups = useMemo(() => {
+    const groups = new Map<string, DiagnosisItem[]>()
+    for (const d of diagnoses) {
+      const list = groups.get(d.disease_name) ?? []
+      list.push(d)
+      groups.set(d.disease_name, list)
+    }
+    return [...groups.entries()]
+      .map(([disease_name, items]) => {
+        const sorted = [...items].sort((a, b) => {
+          const da = a.diagnosed_date ?? ''
+          const db = b.diagnosed_date ?? ''
+          if (da !== db) return da < db ? -1 : 1
+          return a.id - b.id
+        })
+        return { disease_name, earliest: sorted[0], ids: sorted.map((d) => d.id) }
+      })
+      .sort((a, b) => {
+        const da = a.earliest.diagnosed_date ?? ''
+        const db = b.earliest.diagnosed_date ?? ''
+        if (da !== db) return da < db ? -1 : 1
+        return 0
+      })
+  }, [diagnoses])
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-bg-secondary">
@@ -308,16 +344,16 @@ export default function Dashboard() {
           title="诊断记录"
           onAdd={() => setAddModal('diagnosis')}
         >
-          {diagnoses.length === 0 ? <Empty text="暂无诊断记录" /> : diagnoses.map((d) => (
+          {diagnosisGroups.length === 0 ? <Empty text="暂无诊断记录" /> : diagnosisGroups.map(({ disease_name, earliest, ids }) => (
             <RecordRow
-              key={d.id}
-              title={d.disease_name}
+              key={disease_name}
+              title={disease_name}
               badges={[
-                d.severity ? SEVERITY_LABELS[d.severity] ?? d.severity : null,
-                STATUS_LABELS[d.status] ?? d.status,
-                d.diagnosed_date ? d.diagnosed_date : null,
+                earliest.severity ? SEVERITY_LABELS[earliest.severity] ?? earliest.severity : null,
+                <StatusPicker key="status" value={earliest.status} onSelect={(status) => statusMutation.mutate({ ids, status })} />,
+                earliest.diagnosed_date ?? null,
               ]}
-              onDelete={() => deleteMutation.mutate({ type: 'diagnoses', id: d.id })}
+              onDelete={() => deleteMutation.mutate({ type: 'diagnoses', id: earliest.id })}
             />
           ))}
         </SectionCard>
@@ -482,10 +518,44 @@ function SectionCard({ icon, title, onAdd, children }: { icon: string; title: st
   )
 }
 
+function StatusPicker({ value, onSelect }: { value: string; onSelect: (status: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const options: [string, string][] = [['active', '现患'], ['past', '既往'], ['cured', '已愈']]
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 transition hover:bg-slate-200"
+      >
+        {STATUS_LABELS[value] ?? value}
+        <span className="material-symbols-rounded ml-0.5 text-xs">expand_more</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-6 z-40 w-24 rounded-card border border-slate-200 bg-white py-1 shadow-lg">
+            {options.map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => { onSelect(v); setOpen(false) }}
+                className="block w-full px-3 py-1.5 text-left text-xs text-slate-600 transition hover:bg-slate-50"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </span>
+  )
+}
+
 function RecordRow({ title, subtitle, badges, onDelete }: {
   title: string
   subtitle?: string
-  badges: (string | null)[]
+  badges: (string | React.ReactNode | null)[]
   onDelete: () => void
 }) {
   return (
@@ -493,9 +563,11 @@ function RecordRow({ title, subtitle, badges, onDelete }: {
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-slate-700">{title}</span>
         {subtitle && <span className="text-xs text-slate-400">({subtitle})</span>}
-        {badges.filter(Boolean).map((b, i) => (
-          <span key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{b}</span>
-        ))}
+        {badges.filter(Boolean).map((b, i) =>
+          typeof b === 'string'
+            ? <span key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{b}</span>
+            : <span key={i} className="inline-flex">{b}</span>
+        )}
       </div>
       <button onClick={onDelete} className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500" title="删除">
         <span className="material-symbols-rounded text-base">delete</span>

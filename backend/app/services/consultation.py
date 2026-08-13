@@ -52,6 +52,7 @@ SYSTEM_PROMPT = """\
 - B级（常规）：饮食建议、运动指导、指标解读 → 正常回答
 
 回答时始终基于用户画像中的实际数据，不要编造数据。如果数据不足，引导用户上传报告或手动录入。
+涉及既往史、生活方式（吸烟/饮酒等）、用药、过敏、家族史、手术史、疫苗史等问题时，若画像信息不完整，请先调用 query_profile 工具按需查询后再回答；不要仅凭猜测回答"不知道"。
 
 重要规则 — 数据提取优先：
 当用户在对话中提到自己的健康指标数值（如"我血压180/90"、"空腹血糖6.5"等），你必须：
@@ -296,6 +297,27 @@ class ConsultationService:
         from app.services.member_memory import get_memory_summary
 
         prompt = SYSTEM_PROMPT
+        try:
+            from app.services.checkup_recommend import build_health_profile
+            profile = await build_health_profile(self.db, member_id)
+            light_profile = {
+                "基本信息": profile.get("基本信息", {}),
+                "生理指标": profile.get("生理指标", {}).get("latest_metrics", {}),
+                "既往史与现病史": profile.get("既往史与现病史", {}).get("medical_history", []),
+                "家族史": profile.get("家族史", {}),
+                "生活方式": profile.get("生活方式", {}),
+                "用药记录": profile.get("用药记录", []),
+                "过敏信息": profile.get("过敏信息", []),
+                "手术史": profile.get("手术史", []),
+                "疫苗接种史": profile.get("疫苗接种史", []),
+                "特殊状态": profile.get("特殊状态", {}),
+            }
+            prompt += (
+                "\n\n【用户健康画像 — 回答时以此为事实依据，不要编造】\n"
+                + json.dumps(light_profile, ensure_ascii=False, default=str)
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to build health profile for member %s", member_id)
         memory = await get_memory_summary(self.db, member_id)
         if memory:
             prompt += (

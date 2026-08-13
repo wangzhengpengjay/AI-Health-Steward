@@ -18,6 +18,8 @@ from app.models.health import (
     Lifestyle,
     Medication,
     MetricRecord,
+    Surgery,
+    Vaccination,
 )
 from app.providers.base import Message
 from app.providers.router import get_model_router
@@ -138,6 +140,16 @@ async def build_health_profile(db: AsyncSession, member_id: int) -> dict[str, An
     )
     allergies = allergy_result.scalars().all()
 
+    surgery_result = await db.execute(
+        select(Surgery).where(Surgery.member_id == member_id)
+    )
+    surgeries = surgery_result.scalars().all()
+
+    vaccine_result = await db.execute(
+        select(Vaccination).where(Vaccination.member_id == member_id)
+    )
+    vaccinations = vaccine_result.scalars().all()
+
     return {
         "基本信息": {
             "age": age,
@@ -179,6 +191,23 @@ async def build_health_profile(db: AsyncSession, member_id: int) -> dict[str, An
         "过敏信息": [
             {"type": a.type, "name": a.name, "severity": a.severity}
             for a in allergies
+        ],
+        "手术史": [
+            {
+                "surgery_name": s.surgery_name,
+                "surgery_date": s.surgery_date.isoformat() if s.surgery_date else None,
+                "hospital": s.hospital,
+                "notes": s.notes,
+            }
+            for s in surgeries
+        ],
+        "疫苗接种史": [
+            {
+                "vaccine_name": v.vaccine_name,
+                "dose_no": v.dose_no,
+                "vaccinated_date": v.vaccinated_date.isoformat() if v.vaccinated_date else None,
+            }
+            for v in vaccinations
         ],
         "近期检查记录": {"recent_exams": recent_exams},
         "特殊状态": _special_status(member),

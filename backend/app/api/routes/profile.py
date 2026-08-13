@@ -33,6 +33,14 @@ class DiagnosisCreate(BaseModel):
     severity: Optional[str] = None
     status: str = "active"
 
+
+class DiagnosisUpdate(BaseModel):
+    disease_name: Optional[str] = None
+    icd_code: Optional[str] = None
+    diagnosed_date: Optional[date] = None
+    severity: Optional[str] = None
+    status: Optional[str] = None
+
 class MedicationOut(BaseModel):
     id: int
     drug_name: str
@@ -241,3 +249,30 @@ async def delete_profile_record(record_type: str, record_id: int, db: AsyncSessi
     if obj is None:
         raise HTTPException(status_code=404, detail=f"{record_type} {record_id} not found")
     await db.delete(obj)
+
+
+@router.patch(
+    "/{member_id}/profile/diagnoses/{diagnosis_id}",
+    response_model=DiagnosisOut,
+)
+async def update_diagnosis(
+    member_id: int,
+    diagnosis_id: int,
+    payload: DiagnosisUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> Diagnosis:
+    await _ensure_member(db, member_id)
+    result = await db.execute(
+        select(Diagnosis).where(
+            Diagnosis.id == diagnosis_id,
+            Diagnosis.member_id == member_id,
+        )
+    )
+    diagnosis = result.scalars().first()
+    if diagnosis is None:
+        raise HTTPException(status_code=404, detail=f"Diagnosis {diagnosis_id} not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(diagnosis, field, value)
+    await db.flush()
+    await db.refresh(diagnosis)
+    return diagnosis
