@@ -424,7 +424,9 @@ class ConsultationService:
             last_err = None
             for attempt in range(3):
                 try:
+                    logger.info("[report %s] API call attempt %d, sending %d images...", record.id, attempt + 1, len(batch))
                     response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
+                    logger.info("[report %s] API call attempt %d returned %d chars", record.id, attempt + 1, len(response.content))
                     raw = response.content.strip()
                     if raw.startswith("```"):
                         lines = raw.split("\n")
@@ -440,12 +442,15 @@ class ConsultationService:
             raise last_err if last_err else RuntimeError("extraction failed")
 
         batches = chunk_data_urls(data_urls)
+        logger.info("[report %s] Starting extraction: %d batches, %d pages total", record.id, len(batches), len(data_urls))
         batch_results: list[dict] = []
         last_err = None
         for idx, batch in enumerate(batches):
             page_hint = f"(第{idx * MAX_IMAGES_PER_ROUND + 1}-{idx * MAX_IMAGES_PER_ROUND + len(batch)}页)" if len(batches) > 1 else ""
             try:
+                logger.info("[report %s] Batch %d/%d starting (%d images)...", record.id, idx + 1, len(batches), len(batch))
                 batch_results.append(await extract_batch(batch, page_hint))
+                logger.info("[report %s] Batch %d/%d done", record.id, idx + 1, len(batches))
             except Exception as e:
                 last_err = e
                 logger.error(

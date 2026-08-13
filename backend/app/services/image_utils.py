@@ -151,8 +151,8 @@ def merge_extractions(batches: list[dict]) -> dict:
         "metrics": "metric_name",
         "diagnoses": "disease_name",
         "medications": "drug_name",
-        "lab_tests": "report_name",
-        "exam_findings": "finding_category",
+        "lab_tests": "test_name",
+        "exam_findings": "finding_desc",
     }
     for field in _LIST_FIELDS:
         items = []
