@@ -8,14 +8,14 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class MetricRecordBase(BaseModel):
-    metric_name: str = Field(..., min_length=1, max_length=64)
+    metric_name: str = Field(..., min_length=1)
     value: float
-    text_value: Optional[str] = Field(None, max_length=128)
+    text_value: Optional[str] = None
     unit: Optional[str] = Field(None, max_length=32)
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None
     measured_at: datetime
-    context: Optional[str] = Field(None, max_length=64)
+    context: Optional[str] = None
 
 
 class MetricRecordCreate(MetricRecordBase):
@@ -48,7 +48,7 @@ class MetricRecordUpdate(BaseModel):
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None
     measured_at: Optional[datetime] = None
-    context: Optional[str] = Field(None, max_length=64)
+    context: Optional[str] = None
 
     @model_validator(mode="after")
     def _recompute_abnormal(self) -> "MetricRecordUpdate":

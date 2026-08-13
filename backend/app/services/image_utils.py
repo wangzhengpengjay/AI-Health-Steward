@@ -77,3 +77,73 @@ def prepare_for_multimodal(raw: bytes, mime: str) -> list[str]:
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         data_urls.append(f"data:image/jpeg;base64,{b64}")
     return data_urls
+
+
+# 多模态 API 单轮图片数上限(实测确定 = 4)。
+# 多页 PDF 会每页转一张图, 一次发送过多会触发 code 10043 "image count in one round exceeds limit"。
+# 实测: 4 张成功, 5 张失败 -> 上限为 4。
+MAX_IMAGES_PER_ROUND = 4
+
+# 提取 JSON 中需要合并去重的数组字段(按内容去重, 忽略顺序)
+_LIST_FIELDS = ["metrics", "diagnoses", "medications", "lab_tests", "exam_findings"]
+# 提取 JSON 中取第一个非 null 的标量字段
+_SCALAR_FIELDS = ["patient_name", "report_type", "report_date"]
+
+
+def chunk_data_urls(urls: list[str], batch_size: int = MAX_IMAGES_PER_ROUND) -> list[list[str]]:
+    """Split data URLs into batches each with at most ``batch_size`` images.
+
+    Multi-page PDFs produce one data URL per page. Sending them all in a single
+    multimodal round can exceed the provider's per-round image limit (e.g. iFlytek
+    code 10043), so we chunk them for sequential per-batch extraction.
+    """
+    return [urls[i : i + batch_size] for i in range(0, len(urls), batch_size)]
+
+
+def _dedupe(items: list) -> list:
+    """Deduplicate list of dicts (or scalars) while preserving order."""
+    seen = set()
+    out = []
+    for it in items:
+        if isinstance(it, dict):
+            key = tuple(sorted((k, str(v)) for k, v in it.items()))
+        else:
+            key = (str(it),)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+    return out
+
+
+def merge_extractions(batches: list[dict]) -> dict:
+    """Merge several per-batch extraction JSONs into a single report JSON.
+
+    Each batch is a full EXTRACT_PROMPT-shaped dict from a subset of the PDF pages.
+    We merge list fields (dedupe by content), take the first non-null value for scalar
+    fields (patient_name / report_type / report_date), and join summaries.
+    """
+    if not batches:
+        return {}
+    if len(batches) == 1:
+        return batches[0]
+
+    merged: dict = {}
+    # list fields: concat + dedupe
+    for field in _LIST_FIELDS:
+        items = []
+        for b in batches:
+            v = b.get(field) or []
+            if isinstance(v, list):
+                items.extend(v)
+        if items:
+            merged[field] = _dedupe(items)
+        else:
+            merged[field] = []
+    # scalar fields: first non-null
+    for field in _SCALAR_FIELDS:
+        merged[field] = next((b.get(field) for b in batches if b.get(field)), None)
+    # summary: join non-empty summaries
+    summaries = [b.get("summary") for b in batches if b.get("summary")]
+    merged["summary"] = "\n".join(summaries) if summaries else None
+    return merged

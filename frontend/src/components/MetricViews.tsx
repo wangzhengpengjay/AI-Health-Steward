@@ -39,7 +39,7 @@ export function ExamTimeline({ allRecords, tabLabel }: { allRecords: Record<stri
           {allItems.map((item, idx) => {
             const r = item.record
             const date = new Date(r.measured_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-            const hasValue = r.value > 0 && !!r.unit
+            const displayValue = r.text_value ?? (r.value > 0 ? r.value : null)
             return (
               <div key={idx} className="relative flex gap-4 pl-0">
                 <div className="relative z-10 mt-1 h-6 w-6 flex-shrink-0 rounded-full bg-amber-100 flex items-center justify-center">
@@ -51,7 +51,7 @@ export function ExamTimeline({ allRecords, tabLabel }: { allRecords: Record<stri
                       <span className="text-xs text-slate-400">{date}</span>
                       <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{SOURCE_LABELS[r.source_type] || r.source_type}</span>
                     </div>
-                    {hasValue && <span className="text-sm font-semibold text-slate-700">{r.value} {r.unit}</span>}
+                    {displayValue != null && <span className="text-sm font-semibold text-slate-700">{displayValue} {r.unit}</span>}
                   </div>
                   <p className="mt-1 text-sm font-medium text-slate-800">{item.lineLabel}</p>
                   {r.context && <p className="mt-1 text-xs text-slate-500">{r.context}</p>}

@@ -8,8 +8,11 @@ import pytest
 
 from app.services.image_utils import (
     MAX_IMAGE_BYTES,
+    MAX_IMAGES_PER_ROUND,
     _compress_image_bytes,
     _pdf_to_images,
+    chunk_data_urls,
+    merge_extractions,
     prepare_for_multimodal,
 )
 
@@ -73,3 +76,66 @@ def test_prepare_unknown_mime_treated_as_image():
     raw = _small_png()
     urls = prepare_for_multimodal(raw, "image/jpeg")  # passes through
     assert len(urls) == 1
+
+
+def test_chunk_data_urls_splits_over_limit():
+    urls = [f"data:image/jpeg;base64,{i}" for i in range(15)]
+    batches = chunk_data_urls(urls)
+    assert [len(b) for b in batches] == [4, 4, 4, 3]
+    assert sum(len(b) for b in batches) == 15
+    assert all(len(b) <= MAX_IMAGES_PER_ROUND for b in batches)
+
+
+def test_chunk_data_urls_under_limit_single_batch():
+    urls = [f"u{i}" for i in range(3)]
+    batches = chunk_data_urls(urls)
+    assert len(batches) == 1
+    assert len(batches[0]) == 3
+
+
+def test_merge_extractions_dedupes_lists_and_takes_first_scalar():
+    b1 = {
+        "patient_name": "王正鹏",
+        "report_type": "检验报告单",
+        "report_date": "2026-07-26",
+        "metrics": [{"metric_name": "systolic_blood_pressure", "value": 152}],
+        "lab_tests": [{"report_name": "肝功能", "test_name": "谷丙转氨酶", "value": 40}],
+        "diagnoses": [],
+        "medications": [],
+        "exam_findings": [],
+        "summary": "第一页摘要",
+    }
+    b2 = {
+        "patient_name": None,
+        "report_type": None,
+        "report_date": None,
+        "metrics": [
+            {"metric_name": "systolic_blood_pressure", "value": 152},  # dup -> dedupe
+            {"metric_name": "diastolic_blood_pressure", "value": 99},
+        ],
+        "lab_tests": [{"report_name": "血常规", "test_name": "白细胞", "value": 6.5}],
+        "diagnoses": [],
+        "medications": [],
+        "exam_findings": [],
+        "summary": "第二页摘要",
+    }
+    merged = merge_extractions([b1, b2])
+    # scalar: first non-null wins
+    assert merged["patient_name"] == "王正鹏"
+    assert merged["report_type"] == "检验报告单"
+    assert merged["report_date"] == "2026-07-26"
+    # lists merged + deduped
+    assert len(merged["metrics"]) == 2
+    assert len(merged["lab_tests"]) == 2
+    # summaries joined
+    assert merged["summary"] == "第一页摘要\n第二页摘要"
+
+
+def test_merge_extractions_single_batch_returns_as_is():
+    b = {"metrics": [], "summary": "only"}
+    assert merge_extractions([b]) == b
+
+
+def test_max_images_per_round_constant_defined():
+# 实测确定: 多模态单轮 4 张成功, 5 张超限(code 10043)
+    assert MAX_IMAGES_PER_ROUND == 4

@@ -35,7 +35,7 @@ interface MetricTab {
 }
 
 interface DynamicTab {
-  type: 'lab' | 'exam'
+  type: 'lab' | 'exam' | 'generic'
   label: string
   unit: string
   color?: string
@@ -106,6 +106,7 @@ export default function MetricInput() {
   const dynamicTabs = useMemo(() => {
     const labReports: Record<string, string[]> = {}  // report_name -> test_names
     const examCategories: Record<string, string[]> = {}  // category -> items
+    const extraNames = new Set<string>()
     for (const r of allMemberMetrics) {
       if (r.metric_name.startsWith('lab:')) {
         const parts = r.metric_name.split(':')
@@ -119,6 +120,11 @@ export default function MetricInput() {
         const item = parts[2] || '结果'
         if (!examCategories[category]) examCategories[category] = []
         if (!examCategories[category].includes(item)) examCategories[category].push(item)
+      } else if (
+        r.metric_name !== 'bmi' &&
+        !METRIC_TABS.some((t) => t.lines.some((l) => l.key === r.metric_name))
+      ) {
+        extraNames.add(r.metric_name)
       }
     }
     const tabs: DynamicTab[] = []
@@ -146,6 +152,18 @@ export default function MetricInput() {
         })),
       })
     }
+    if (extraNames.size > 0) {
+      tabs.push({
+        type: 'generic',
+        label: '其他指标',
+        unit: '',
+        lines: [...extraNames].sort().map((name) => ({
+          key: name,
+          label: name,
+          refLower: 0, refUpper: 0, color: '#64748B', warningUpper: 0, criticalUpper: 0,
+        })),
+      })
+    }
     return tabs
   }, [allMemberMetrics])
 
@@ -158,7 +176,7 @@ export default function MetricInput() {
     queryFn: async () => {
       const results: Record<string, MetricRecord[]> = {}
       // For dynamic tabs, filter from allMemberMetrics
-      if ('type' in tab && (tab.type === 'lab' || tab.type === 'exam')) {
+      if ('type' in tab && (tab.type === 'lab' || tab.type === 'exam' || tab.type === 'generic')) {
         for (const line of tab.lines) {
           results[line.key] = allMemberMetrics.filter(r => r.metric_name === line.key)
         }
@@ -252,7 +270,7 @@ export default function MetricInput() {
         const chartKey = tab.bmiConfig ? "bmi" : line.key
         const records = allRecords[chartKey] || []
         const record = records.find((r) => r.measured_at === date)
-        if (record) {
+        if (record && !record.text_value) {
           point[line.key] = record.value
           point[`${line.key}_abnormal`] = record.is_abnormal
         }
@@ -388,8 +406,8 @@ export default function MetricInput() {
                 <div key={line.key} className="flex-1 rounded-card border border-slate-200 bg-white p-4">
                   <p className="text-xs text-slate-500">{line.label}</p>
                   <p className="mt-1 text-2xl font-semibold text-slate-800">
-                    {latest ? latest.value : '--'}
-                    <span className="ml-1 text-sm text-slate-400">{tab.unit}</span>
+                    {latest ? (latest.text_value || latest.value) : '--'}
+                    <span className="ml-1 text-sm text-slate-400">{latest?.unit || tab.unit}</span>
                   </p>
                   {latest && latest.is_abnormal && (
                     <span className="mt-1 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
@@ -652,7 +670,7 @@ export default function MetricInput() {
                       <div className="flex items-center gap-3">
                         <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
                         <span className="text-xs text-slate-500">{line.label}</span>
-                        <span className="text-sm font-medium text-slate-700">{r.value} {tab.unit}</span>
+                        <span className="text-sm font-medium text-slate-700">{r.text_value || r.value} {r.unit || tab.unit}</span>
                         {r.is_abnormal && (
                           <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
                             {line.isLowerAbnormal ? '偏低' : '偏高'}

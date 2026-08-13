@@ -37,16 +37,16 @@ class MetricRecord(Base):
     member_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
     )
-    metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    metric_name: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[float] = mapped_column(nullable=False)
-    text_value: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # for non-numeric lab results (e.g. "淡黄色")
+    text_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # for non-numeric lab results (e.g. "淡黄色")
     unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     reference_lower: Mapped[Optional[float]] = mapped_column(nullable=True)
     reference_upper: Mapped[Optional[float]] = mapped_column(nullable=True)
     is_abnormal: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_critical: Mapped[bool] = mapped_column(default=False, nullable=False)
     measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    context: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # fasting/postmeal/...
+    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # fasting/postmeal/...
     source_type: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

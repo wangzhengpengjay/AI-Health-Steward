@@ -25,6 +25,7 @@ from app.models.family import FamilyMember
 from app.models.health import ChatMessage, MetricRecord, ReportRecord
 from app.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from app.providers.router import ModelRouter
+from app.services.extraction_rules import normalize_extraction
 from app.services.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,9 @@ EXTRACT_PROMPT = """\
 要求：
 1. 只提取报告中明确出现的数据，不要编造或推断
 2. 如果某个字段无法识别，返回null或空数组
-3. 检查指标（exam_findings）只提取异常发现，不提取正常检查结果
-4. 如果报告中有姓名，尝试识别归属人
+3. 分类规则：只有血压、血糖、心率、体重/BMI 四类家庭指标可放入 metrics；血液、体液、尿液等检验结果放入 lab_tests；影像、电生理、核医学等检查结果放入 exam_findings
+4. 检查指标（exam_findings）：异常发现必须提取；可量化的检查参数（如心电图 P-R间期、QRS时限）即使正常也提取，用于时间轴展示；无具体参数的"未见异常"类描述不提取
+5. 如果报告中有姓名，尝试识别归属人
 
 请严格按照以下JSON格式返回（不要包含markdown代码块标记）：
 {
@@ -96,7 +98,7 @@ EXTRACT_PROMPT = """\
   "report_date": "报告日期 YYYY-MM-DD 格式，无法识别则为null",
   "metrics": [
     {
-      "metric_name": "指标标识符，使用以下标准名称之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, total_cholesterol, triglycerides, ldl_cholesterol, hdl_cholesterol, heart_rate, weight",
+      "metric_name": "指标标识符，只能使用以下固定指标之一：systolic_blood_pressure, diastolic_blood_pressure, fasting_glucose, postmeal_glucose, random_glucose, postmeal_1h_glucose, bedtime_glucose, heart_rate, weight, bmi。其他任何指标一律不得放入 metrics，必须按医学规则归入 lab_tests 或 exam_findings",
       "label": "报告中显示的指标中文名",
       "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
@@ -121,7 +123,7 @@ EXTRACT_PROMPT = """\
   ],
   "lab_tests": [
     {
-      "report_name": "检验报告名称，单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
+      "report_name": "检验报告名称（血液/体液/尿液/生化/免疫等检验），单个报告一个名称，如 肝功能。不要将多个报告名合并。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准名",
       "test_name": "指标名称，如 白细胞/血红蛋白/谷丙转氨酶",
       "value": 数值或文本（定性结果如"淡黄色"、"透明"用文本，定量结果用数值）,
       "unit": "单位",
@@ -132,11 +134,11 @@ EXTRACT_PROMPT = """\
   ],
   "exam_findings": [
     {
-      "finding_category": "检查发现的标准分类，如 肺结节/甲状腺结节/肝囊肿/乳腺结节 等。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准类别名",
-      "finding_desc": "具体诊断描述，如 右肺水平裂旁微小磨玻璃结节",
-      "value_num": "可量化的数值或null",
-      "unit": "数值的单位或null",
-      "conclusion": "检查结论或建议"
+      "finding_category": "检查分类（影像/电生理/核医学等），如 心电图/胸部CT/肺功能/甲状腺超声。必须与已有标签保持一致（见下方已有标签列表），如已有则复用，没有的按医学逻辑新建简短标准类别名",
+      "finding_desc": "检查项目参数或诊断描述，如 P-R间期/右肺水平裂旁微小磨玻璃结节 等",
+      "value_num": "可量化的数值或文本（复合值如 375/411 用文本）或null，如 P-R间期189则填189",
+      "unit": "数值的单位或null，如 ms/mm",
+      "conclusion": "检查结论或建议或null，如 建议随诊/考虑良性 等"
     }
   ],
   "summary": "报告摘要，1-3句话概述"
@@ -368,37 +370,61 @@ class ConsultationService:
         prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
         multimodal = self.router.get_multimodal_provider()
-        from app.services.image_utils import prepare_for_multimodal
+        from app.services.image_utils import (
+            MAX_IMAGES_PER_ROUND,
+            chunk_data_urls,
+            merge_extractions,
+            prepare_for_multimodal,
+        )
         data_urls = prepare_for_multimodal(file_content, mime)
-        user_content: list[dict] = [{"type": "text", "text": "请解析这份健康报告并提取结构化数据"}]
-        for url in data_urls:
-            user_content.append({"type": "image_url", "image_url": {"url": url}})
-        messages = [
-            Message(role="system", content=prompt),
-            Message(role="user", content=user_content),
-        ]
 
         import asyncio
+
+        async def extract_batch(batch: list[str], page_hint: str) -> dict:
+            """Extract structured JSON from one batch of image data URLs (≤ per-round limit)."""
+            user_content: list[dict] = [
+                {"type": "text", "text": f"请解析这份健康报告{page_hint}并提取结构化数据, 只提取本批图片中出现的数据, 用相同JSON格式"},
+            ]
+            for url in batch:
+                user_content.append({"type": "image_url", "image_url": {"url": url}})
+            messages = [
+                Message(role="system", content=prompt),
+                Message(role="user", content=user_content),
+            ]
+            last_err = None
+            for attempt in range(3):
+                try:
+                    response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
+                    raw = response.content.strip()
+                    if raw.startswith("```"):
+                        lines = raw.split("\n")
+                        lines = [l for l in lines if not l.strip().startswith("```")]
+                        raw = "\n".join(lines)
+                    parsed = json.loads(raw)
+                    return parsed if isinstance(parsed, dict) else {}
+                except Exception as e:
+                    last_err = e
+                    logger.warning("Image extraction attempt %d failed: %s", attempt + 1, e)
+                    if attempt < 2:
+                        await asyncio.sleep(2)
+            raise last_err if last_err else RuntimeError("extraction failed")
+
+        batches = chunk_data_urls(data_urls)
+        batch_results: list[dict] = []
         last_err = None
-        data = None
-        for attempt in range(3):
+        for idx, batch in enumerate(batches):
+            page_hint = f"(第{idx * MAX_IMAGES_PER_ROUND + 1}-{idx * MAX_IMAGES_PER_ROUND + len(batch)}页)" if len(batches) > 1 else ""
             try:
-                response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
-                raw = response.content.strip()
-                if raw.startswith("```"):
-                    lines = raw.split("\n")
-                    lines = [l for l in lines if not l.strip().startswith("```")]
-                    raw = "\n".join(lines)
-                data = json.loads(raw)
-                break
+                batch_results.append(await extract_batch(batch, page_hint))
             except Exception as e:
                 last_err = e
-                logger.warning("Image extraction attempt %d failed: %s", attempt + 1, e)
-                if attempt < 2:
-                    await asyncio.sleep(2)
+                logger.error(
+                    "Batch %d/%d extraction failed for report %s: %s",
+                    idx + 1, len(batches), record.id, e,
+                )
 
-        if data is None:
-            logger.error("Image extraction failed after 3 attempts for report %s", record.id)
+        if not batch_results:
+            logger.error("Image extraction failed (all batches) for report %s", record.id)
             record.status = "rejected"
             await self.db.flush()
             await self.db.commit()
@@ -408,6 +434,8 @@ class ConsultationService:
                 "error": str(last_err),
                 "extraction_json": f"[报告解析失败: {last_err}] 请用户描述报告内容。",
             }
+
+        data = normalize_extraction(merge_extractions(batch_results))
 
         # Success — persist extraction
         record.extraction = json.dumps(data, ensure_ascii=False)
