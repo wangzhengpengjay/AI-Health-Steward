@@ -268,14 +268,16 @@ export default function AssessResult() {
           >
             返回自测
           </button>
-          {isHigh && (
-            <button
-              onClick={() => navigate('/chat')}
-              className="flex-1 rounded-field border border-slate-300 bg-white py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              咨询 AI 健康管家
-            </button>
-          )}
+          <button
+            onClick={() => {
+              const scaleName = result.scale_name ?? result.scale_code.toUpperCase()
+              const prefilled = `我刚完成了「${scaleName}」测评，总分 ${result.total_score} 分，结果为「${result.risk_label}」。${result.advice ? '建议：' + result.advice : ''}请帮我进一步解读和建议。`
+              navigate('/chat', { state: { initialInput: prefilled } })
+            }}
+            className="flex-1 rounded-field border border-slate-300 bg-white py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            咨询 AI 健康管家
+          </button>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useMemberStore } from '@/stores/memberStore'
 import { useChatStore } from '@/stores/chatStore'
 import { chatApi, type ReportRecord } from '@/lib/api'
@@ -26,6 +27,7 @@ export default function Chat() {
   const pendingReport = memberChat?.pendingReport ?? null
   const extractingReport = memberChat?.extractingReport ?? false
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const location = useLocation()
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -67,6 +69,16 @@ export default function Chat() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, streamingContent])
+
+  // Prefill input when navigating from AssessResult with scale context
+  useEffect(() => {
+    const state = location.state as { initialInput?: string } | null
+    if (state?.initialInput) {
+      setInput(state.initialInput)
+      // Clear the state so it doesn't re-trigger on re-renders
+      window.history.replaceState({}, '')
+    }
+  }, [location.state])
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
