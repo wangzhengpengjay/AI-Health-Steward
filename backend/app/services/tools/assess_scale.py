@@ -16,13 +16,13 @@ from app.core.assessment_scales import get_scale, list_scales
 from app.models.assessments import ScaleResult
 from app.services.tools.base import HealthTool
 
-_SCALE_CODES = ["phq9", "gad7", "diabetes", "ascvd"]
+_SCALE_CODES = ["phq9", "gad7", "diabetes", "ascvd", "isi", "hypertension", "dyslipidemia", "ad8", "stroke"]
 
 
 class AssessScaleTool(HealthTool):
     name: str = "assess_scale"
     description: str = (
-        "对家庭成员进行风险自测量表（糖尿病/心血管/抑郁PHQ-9/焦虑GAD-7）。"
+        "对家庭成员进行风险自测量表（糖尿病/心血管/抑郁PHQ-9/焦虑GAD-7/失眠ISI/高血压/血脂异常/认知AD8/脑卒中）。"
         "调用时不带 answers 会返回量表题目供用户作答；用户完成作答后传入 scale_code 与 answers 进行计分。"
     )
     parameters: dict[str, Any] = {

@@ -13,7 +13,7 @@ from app.api.routes.scales import _should_push
 
 def test_all_scales_registered():
     codes = {s.code for s in list_scales()}
-    assert {"phq9", "gad7", "diabetes", "ascvd"} <= codes
+    assert {"phq9", "gad7", "diabetes", "ascvd", "isi", "hypertension", "dyslipidemia", "ad8", "stroke"} <= codes
 
 
 def test_phq9_min_no_depression():
@@ -135,3 +135,69 @@ def test_result_out_has_scale_name_and_answers():
     out = _result_out(r)
     assert out.scale_name == "抑郁自评量表（PHQ-9）"
     assert '"phq1"' in out.answers
+
+
+# ---- 新增量表边界测试 ----
+
+def test_isi_no_insomnia_and_severe():
+    s = get_scale("isi")
+    # 全部选 0 → 无明显失眠
+    answers_low = {f"isi{i}": 0 for i in range(1, 8)}
+    total, d = s.score(answers_low)
+    assert total == 0
+    assert d["tier"]["level"] == "none"
+    # 全部选 4 → 重度失眠
+    answers_high = {f"isi{i}": 4 for i in range(1, 8)}
+    total, d = s.score(answers_high)
+    assert total == 28
+    assert d["tier"]["level"] == "severe"
+
+
+def test_hypertension_low_and_high():
+    s = get_scale("hypertension")
+    low = {"age": 0, "family": 0, "salt": 0, "weight": 0,
+           "alcohol": 0, "exercise": 0, "stress": 0, "bp": 0}
+    total, d = s.score(low)
+    assert d["tier"]["level"] == "low"
+    high = {"age": 3, "family": 2, "salt": 2, "weight": 2,
+            "alcohol": 2, "exercise": 2, "stress": 2, "bp": 2}
+    total, d = s.score(high)
+    assert d["tier"]["level"] == "high"
+
+
+def test_dyslipidemia_low_and_high():
+    s = get_scale("dyslipidemia")
+    low = {"age": 0, "family": 0, "weight": 0, "smoke": 0,
+           "alcohol": 0, "exercise": 0, "diet": 0}
+    total, d = s.score(low)
+    assert d["tier"]["level"] == "low"
+    high = {"age": 3, "family": 2, "weight": 2, "smoke": 2,
+            "alcohol": 2, "exercise": 2, "diet": 2}
+    total, d = s.score(high)
+    assert d["tier"]["level"] == "high"
+
+
+def test_ad8_normal_and_positive():
+    s = get_scale("ad8")
+    # 全部 0 → 未见明显认知变化
+    answers_normal = {f"ad8_{i}": 0 for i in range(1, 9)}
+    total, d = s.score(answers_normal)
+    assert total == 0
+    assert d["tier"]["level"] == "none"
+    # ≥2 项有变化 → 可疑认知障碍
+    answers_positive = {f"ad8_{i}": 1 for i in range(1, 9)}
+    total, d = s.score(answers_positive)
+    assert total == 8
+    assert d["tier"]["level"] == "high"
+
+
+def test_stroke_low_and_high():
+    s = get_scale("stroke")
+    low = {"bp": 0, "afib": 0, "smoke": 0, "lipid": 0,
+           "diabetes": 0, "exercise": 0, "weight": 0, "history": 0}
+    total, d = s.score(low)
+    assert d["tier"]["level"] == "low"
+    high = {"bp": 3, "afib": 3, "smoke": 2, "lipid": 2,
+            "diabetes": 2, "exercise": 1, "weight": 1, "history": 3}
+    total, d = s.score(high)
+    assert d["tier"]["level"] == "high"
