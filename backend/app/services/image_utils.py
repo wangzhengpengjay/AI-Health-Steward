@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -101,12 +102,7 @@ def chunk_data_urls(urls: list[str], batch_size: int = MAX_IMAGES_PER_ROUND) -> 
 
 
 def _dedupe(items: list, key_field: str | None = None) -> list:
-    """Deduplicate list of dicts by a key field (or full content if key_field is None).
-
-    When key_field is provided, items with the same key_field value are merged:
-    the one with more non-null fields is kept, and text fields are concatenated
-    if they differ.
-    """
+    """Deduplicate list of dicts by a key field (or full content if key_field is None)."""
     if not key_field:
         # Fall back to full-content dedupe
         seen = set()
@@ -122,38 +118,19 @@ def _dedupe(items: list, key_field: str | None = None) -> list:
             out.append(it)
         return out
 
-    # Dedupe by key_field, merge richer items
-    by_key: dict[str, dict] = {}
-    order: list[str] = []
+    # Dedupe by key_field, keep first occurrence (reduce step will handle merging)
+    seen_keys = set()
+    out = []
     for it in items:
         if not isinstance(it, dict) or key_field not in it:
-            # Non-dict or missing key: keep as-is via content dedupe
-            k = json.dumps(it, ensure_ascii=False, sort_keys=True) if isinstance(it, dict) else str(it)
-            if k not in by_key:
-                by_key[k] = it  # type: ignore
-                order.append(k)
+            out.append(it)
             continue
         k = str(it[key_field])
-        if k not in by_key:
-            by_key[k] = it
-            order.append(k)
-        else:
-            existing = by_key[k]
-            # Count non-null fields in each
-            existing_rich = sum(1 for v in existing.values() if v is not None and v != "" and v != 0)
-            new_rich = sum(1 for v in it.values() if v is not None and v != "" and v != 0)
-            if new_rich > existing_rich:
-                # Merge: carry over any non-null fields from existing that are null in new
-                for fk, fv in existing.items():
-                    if fv is not None and fv != "" and (it.get(fk) is None or it.get(fk) == ""):
-                        it[fk] = fv
-                by_key[k] = it
-            else:
-                # Merge: carry over any non-null fields from new that are null in existing
-                for fk, fv in it.items():
-                    if fv is not None and fv != "" and (existing.get(fk) is None or existing.get(fk) == ""):
-                        existing[fk] = fv
-    return [by_key[k] for k in order]
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        out.append(it)
+    return out
 
 
 def merge_extractions(batches: list[dict]) -> dict:
@@ -194,3 +171,63 @@ def merge_extractions(batches: list[dict]) -> dict:
     summaries = [b.get("summary") for b in batches if b.get("summary")]
     merged["summary"] = "\n".join(summaries) if summaries else None
     return merged
+
+
+# Reduce 阶段提示词：让文本模型对多批次提取结果做智能整合
+_REDUCE_PROMPT = """\
+你是一个医疗报告数据整合助手。一份多页体检报告被分成多个批次分别提取，现在需要你将所有批次的结果整合为一份完整、无重复的报告数据。
+
+整合规则：
+1. **合并重复项**：同一个指标/诊断/检查可能在多个批次中出现（例如总结页和详情页都提到了甲状腺囊肿），必须合并为一条，保留信息最完整、数值最精确的那个版本
+2. **不要丢弃数据**：如果两条记录描述的是同一指标但补充信息不同（如一条有数值一条有建议），合并时应保留所有非空字段
+3. **消除矛盾**：如果两条记录数值矛盾，保留更精确/更具体的那个（如 4*3mm 优于 无数值）
+4. **统一摘要**：将各批次的 summary 合并为一段连贯、完整的报告摘要，不要遗漏任何异常发现
+5. **输出格式**：返回与输入相同的 JSON 结构，不要包含 markdown 代码块标记
+
+请直接输出整合后的 JSON。"""
+
+
+async def reduce_extraction(
+    merged_data: dict,
+    text_provider,
+) -> dict:
+    """Use a text LLM to intelligently consolidate multi-batch extraction results.
+
+    This is the 'reduce' step in a map-reduce pipeline:
+    - Map: each batch of PDF pages → structured JSON (done by extract_batch)
+    - Merge: concat + simple dedupe (done by merge_extractions)
+    - Reduce: text LLM consolidates duplicates, resolves conflicts, unifies summary
+
+    Args:
+        merged_data: The merged JSON from merge_extractions()
+        text_provider: A text model provider with .chat() method
+
+    Returns:
+        Consolidated dict with duplicates merged and conflicts resolved.
+    """
+    from app.providers.base import Message
+
+    raw_input = json.dumps(merged_data, ensure_ascii=False, indent=2)
+    messages = [
+        Message(role="system", content=_REDUCE_PROMPT),
+        Message(role="user", content=f"以下是多批次提取后合并的原始数据（可能有重复和矛盾）：\n\n{raw_input}"),
+    ]
+    try:
+        response = await text_provider.chat(messages, temperature=0.1, max_tokens=4096)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            raw = "\n".join(lines)
+        result = json.loads(raw)
+        if isinstance(result, dict):
+            logger.info("Reduce step: successfully consolidated %d metrics → %d, %d lab_tests → %d, %d exam_findings → %d",
+                        len(merged_data.get("metrics", [])), len(result.get("metrics", [])),
+                        len(merged_data.get("lab_tests", [])), len(result.get("lab_tests", [])),
+                        len(merged_data.get("exam_findings", [])), len(result.get("exam_findings", [])))
+            return result
+        logger.warning("Reduce step: model returned non-dict, falling back to merged data")
+        return merged_data
+    except Exception as e:
+        logger.warning("Reduce step failed (%s), falling back to merged data", e)
+        return merged_data

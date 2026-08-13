@@ -404,6 +404,7 @@ class ConsultationService:
             chunk_data_urls,
             merge_extractions,
             prepare_for_multimodal,
+            reduce_extraction,
         )
         data_urls = prepare_for_multimodal(file_content, mime)
 
@@ -465,6 +466,14 @@ class ConsultationService:
             }
 
         data = normalize_extraction(merge_extractions(batch_results))
+
+        # Reduce step: if multiple batches, use text LLM to consolidate
+        if len(batch_results) > 1:
+            try:
+                text_provider = self.router.get_text_provider()
+                data = await reduce_extraction(data, text_provider)
+            except Exception as e:
+                logger.warning("Reduce step skipped (%s), using merged data as-is", e)
 
         # Success — persist extraction
         record.extraction = json.dumps(data, ensure_ascii=False)
