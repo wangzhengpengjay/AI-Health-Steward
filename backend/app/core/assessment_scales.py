@@ -338,18 +338,18 @@ _reg(AssessmentScale(
 
 # ---- AD8 认知障碍早期筛查 ----
 AD8_OPTIONS = [
-    {"value": 0, "label": "没有变化"},
-    {"value": 1, "label": "有变化"},
+    {"value": 0, "label": "否，没有"},
+    {"value": 1, "label": "是，有"},
 ]
 AD8_QUESTIONS = [
-    {"id": "ad8_1", "text": "判断力是否出现问题（如做决定困难、容易受骗）？", "options": AD8_OPTIONS},
-    {"id": "ad8_2", "text": "对以前的活动和爱好兴趣是否减退？", "options": AD8_OPTIONS},
-    {"id": "ad8_3", "text": "是否经常重复相同的问题、故事或说法？", "options": AD8_OPTIONS},
-    {"id": "ad8_4", "text": "学习使用小工具、设备或电器是否有困难？", "options": AD8_OPTIONS},
-    {"id": "ad8_5", "text": "是否忘记正确的月份或年份？", "options": AD8_OPTIONS},
-    {"id": "ad8_6", "text": "处理复杂的个人事务（如记账、缴费）是否有困难？", "options": AD8_OPTIONS},
-    {"id": "ad8_7", "text": "是否记不住与他人的约定或安排？", "options": AD8_OPTIONS},
-    {"id": "ad8_8", "text": "日常生活中是否持续出现思维或记忆问题？", "options": AD8_OPTIONS},
+    {"id": "ad8_1", "text": "过去几年中，判断力出现了问题（如做决定困难、容易受骗）", "options": AD8_OPTIONS},
+    {"id": "ad8_2", "text": "过去几年中，对以前的活动和爱好兴趣减退", "options": AD8_OPTIONS},
+    {"id": "ad8_3", "text": "过去几年中，经常重复相同的问题、故事或说法", "options": AD8_OPTIONS},
+    {"id": "ad8_4", "text": "过去几年中，学习使用小工具、设备或电器变得困难", "options": AD8_OPTIONS},
+    {"id": "ad8_5", "text": "过去几年中，忘记了正确的月份或年份", "options": AD8_OPTIONS},
+    {"id": "ad8_6", "text": "过去几年中，处理复杂的个人事务（如记账、缴费）变得困难", "options": AD8_OPTIONS},
+    {"id": "ad8_7", "text": "过去几年中，记不住与他人的约定或安排", "options": AD8_OPTIONS},
+    {"id": "ad8_8", "text": "过去几年中，日常生活中持续出现思维或记忆问题", "options": AD8_OPTIONS},
 ]
 _reg(AssessmentScale(
     code="ad8",

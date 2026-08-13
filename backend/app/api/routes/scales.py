@@ -142,6 +142,14 @@ async def get_scale_questions(
         raise HTTPException(status_code=404, detail="量表不存在")
     recent = await _recent_result(db, member_id, code)
     should_push, reason = _should_push(recent)
+    last_result = None
+    if recent is not None:
+        last_result = {
+            "total_score": recent.total_score,
+            "risk_level": recent.risk_level,
+            "risk_label": recent.risk_label,
+            "created_at": recent.created_at.isoformat() if recent.created_at else None,
+        }
     return {
         "code": scale.code,
         "name": scale.name,
@@ -152,6 +160,7 @@ async def get_scale_questions(
         "caveat": scale.caveat,
         "should_push": should_push,
         "reason": reason,
+        "last_result": last_result,
     }
 
 
