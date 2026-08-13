@@ -56,12 +56,8 @@ function MemberCard({ member }: { member: FamilyMember }) {
   const taskCount = tasks.length
   void criticalTasks
 
-  const critical = metrics.filter(
-    (r) => r.is_critical && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'),
-  )
-  const abnormal = metrics.filter(
-    (r) => r.is_abnormal && !r.is_critical && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'),
-  )
+  const critical = metrics.filter((r) => r.is_critical)
+  const abnormal = metrics.filter((r) => r.is_abnormal && !r.is_critical)
   const hasProfileData =
     !!profile &&
     (profile.diagnoses.length > 0 ||

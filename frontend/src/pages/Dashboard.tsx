@@ -112,10 +112,10 @@ export default function Dashboard() {
   }
   reportGroups.push(...Object.values(groupMap))
 
-  const abnormals = allMetrics.filter((r) => r.is_abnormal && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'))
+  const abnormals = allMetrics.filter((r) => r.is_abnormal)
   const abnormalMetrics = [...new Set(abnormals.map((r) => r.metric_name))]
   // P1-2: 危急值（需立即就医）
-  const criticalMetrics = allMetrics.filter((r) => r.is_critical && !r.metric_name.startsWith('lab:') && !r.metric_name.startsWith('exam:'))
+  const criticalMetrics = allMetrics.filter((r) => r.is_critical)
 
   const age = member.birth_date
     ? Math.floor((Date.now() - new Date(member.birth_date).getTime()) / 365.25 / 86400000)
