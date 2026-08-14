@@ -118,16 +118,21 @@ async def update_metric(
             detail=f"MetricRecord {metric_id} not found",
         )
     data = payload.model_dump(exclude_unset=True)
-    # Re-compute abnormal/critical if value or references changed
+    # Re-compute abnormal/critical if value or references changed.
+    # Use the same clinical critical thresholds as create_metric (P1-2), NOT the
+    # old relative heuristic, so create/update stay consistent.
     new_value = data.get("value", metric.value)
     new_lower = data.get("reference_lower", metric.reference_lower)
     new_upper = data.get("reference_upper", metric.reference_upper)
     if new_lower is not None and new_upper is not None:
         data["is_abnormal"] = not (new_lower <= new_value <= new_upper)
-        data["is_critical"] = bool(
-            data["is_abnormal"]
-            and (new_value < new_lower * 0.5 or new_value > new_upper * 1.5)
-        )
+        data["is_critical"] = False
+        if data["is_abnormal"]:
+            from app.core.reference_ranges import is_critical_value
+            from app.core.utils import compute_age as _age
+            member = await db.get(FamilyMember, metric.member_id)
+            age = _age(member.birth_date) if member else None
+            data["is_critical"] = is_critical_value(metric.metric_name, float(new_value), age)
     for key, val in data.items():
         setattr(metric, key, val)
     await db.flush()

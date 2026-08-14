@@ -58,3 +58,29 @@ class TestCriticalValue:
 
     def test_unknown_metric_falls_back_false(self) -> None:
         assert is_critical_value("some_metric", 5, 40) is False
+
+
+class TestCriticalConsistencyWithUpdate:
+    """create_metric (is_critical_value) and update_metric must agree.
+
+    Regression: update_metric still used the old relative heuristic
+    (abnormal and value > upper*1.5), which flagged e.g. fasting glucose 12
+    as critical while create_metric (clinical thresholds, >=16.7) did not.
+    """
+
+    def test_fasting_glucose_12_not_critical(self) -> None:
+        # 12 < 16.7 high-glucose crisis threshold -> NOT critical in both paths
+        assert is_critical_value("fasting_glucose", 12, 40) is False
+
+    def test_fasting_glucose_17_critical(self) -> None:
+        assert is_critical_value("fasting_glucose", 17, 40) is True
+
+    def test_fasting_glucose_2_low_critical(self) -> None:
+        assert is_critical_value("fasting_glucose", 2.0, 40) is True
+
+    def test_systolic_170_not_critical_but_abnormal(self) -> None:
+        # 170 is abnormal (>=140) but not a hypertensive crisis (<180)
+        assert is_critical_value("systolic_blood_pressure", 170, 40) is False
+
+    def test_systolic_185_critical(self) -> None:
+        assert is_critical_value("systolic_blood_pressure", 185, 40) is True

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FamilyMemberBase(BaseModel):
@@ -26,14 +26,17 @@ class FamilyMemberCreate(FamilyMemberBase):
 
     @field_validator("bmi", mode="after")
     @classmethod
-    def _compute_bmi(cls, v: Optional[float], info) -> Optional[float]:
-        if v is not None:
-            return round(v, 1)
-        height = info.data.get("height")
-        weight = info.data.get("weight")
-        if height and weight and height > 0:
-            return round(weight / (height / 100) ** 2, 1)
-        return None
+    def _round_bmi(cls, v: Optional[float]) -> Optional[float]:
+        # NOTE: an `after` field validator does not run when the field falls back
+        # to its default, so the height/weight -> BMI computation must live in a
+        # model validator below (see _compute_bmi_from_body).
+        return round(v, 1) if v is not None else None
+
+    @model_validator(mode="after")
+    def _compute_bmi_from_body(self) -> "FamilyMemberCreate":
+        if self.bmi is None and self.height and self.weight and self.height > 0:
+            self.bmi = round(self.weight / (self.height / 100) ** 2, 1)
+        return self
 
 
 class FamilyMemberUpdate(BaseModel):
