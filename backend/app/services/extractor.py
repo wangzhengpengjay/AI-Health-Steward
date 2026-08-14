@@ -63,12 +63,8 @@ async def extract_metrics_from_text(
             Message(role="user", content=text),
         ]
         response = await provider.chat(messages, temperature=0.0, max_tokens=512)
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            raw = "\n".join(lines)
-        data = json.loads(raw)
+        from app.services.image_utils import parse_model_json
+        data = parse_model_json(response.content)
     except Exception as e:
         logger.warning("Metric extraction failed: %s", e)
         return []

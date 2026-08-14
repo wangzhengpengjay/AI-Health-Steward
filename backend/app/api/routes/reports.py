@@ -285,6 +285,8 @@ async def upload_report(
     )
     db.add(record)
     await db.flush()
+    # P0-2: commit immediately so the extracting record is visible in DB.
+    await db.commit()
 
     # Save file to disk using record.id
     ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
@@ -297,9 +299,11 @@ async def upload_report(
         MAX_IMAGES_PER_ROUND,
         chunk_data_urls,
         merge_extractions,
-        prepare_for_multimodal,
+        parse_model_json,
+        prepare_for_multimodal_async,
     )
-    data_urls = prepare_for_multimodal(content, mime)
+    # P0-1: use async version to avoid blocking the event loop.
+    data_urls = await prepare_for_multimodal_async(content, mime)
 
     # Run extraction
     provider = model_router.get_multimodal_provider()
@@ -342,13 +346,8 @@ async def upload_report(
         for attempt in range(3):
             try:
                 response = await provider.chat(messages, temperature=0.1, max_tokens=4096)
-                raw = response.content.strip()
-                if raw.startswith("```"):
-                    lines = raw.split("\n")
-                    lines = [l for l in lines if not l.strip().startswith("```")]
-                    raw = "\n".join(lines)
-                parsed = json.loads(raw)
-                return parsed if isinstance(parsed, dict) else {}
+                # P0-3: unified JSON parsing
+                return parse_model_json(response.content)
             except Exception as e:
                 last_err = e
                 logger.warning("Extraction attempt %d failed for report %s: %s", attempt + 1, record.id, e)
@@ -645,9 +644,10 @@ async def retry_extraction(
     record.status = "extracting"
     record.extraction = None
     await db.flush()
+    await db.commit()  # P0-2: commit before long extraction
 
-    from app.services.image_utils import prepare_for_multimodal
-    data_urls = prepare_for_multimodal(content, record.file_type)
+    from app.services.image_utils import prepare_for_multimodal_async, parse_model_json
+    data_urls = await prepare_for_multimodal_async(content, record.file_type)
 
     provider = model_router.get_multimodal_provider()
     members_result = await db.execute(
@@ -682,12 +682,8 @@ async def retry_extraction(
     for attempt in range(3):
         try:
             response = await provider.chat(messages, temperature=0.1, max_tokens=4096)
-            raw = response.content.strip()
-            if raw.startswith("```"):
-                lines = raw.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                raw = "\n".join(lines)
-            data = normalize_extraction(json.loads(raw))
+            # P0-3: unified JSON parsing
+            data = normalize_extraction(parse_model_json(response.content))
             ext = ExtractionResult(**data)
             break
         except Exception as e:

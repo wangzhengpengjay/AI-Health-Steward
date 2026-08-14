@@ -368,6 +368,11 @@ class ConsultationService:
         )
         self.db.add(record)
         await self.db.flush()
+        # P0-2: commit immediately so the extracting record is visible in DB.
+        # The extraction can take 60+ seconds for multi-page PDFs; holding an
+        # open transaction that long can cause connection pool exhaustion and
+        # makes the record invisible to other queries until extraction finishes.
+        await self.db.commit()
 
         # Save file to disk for thumbnail/preview
         from pathlib import Path
@@ -404,10 +409,15 @@ class ConsultationService:
             MAX_IMAGES_PER_ROUND,
             chunk_data_urls,
             merge_extractions,
-            prepare_for_multimodal,
+            parse_model_json,
+            prepare_for_multimodal_async,
             reduce_extraction,
         )
-        data_urls = prepare_for_multimodal(file_content, mime)
+        # P0-1: use async version to avoid blocking the event loop.
+        # fitz/Pillow are synchronous C libraries; running them directly in the
+        # async event loop blocks all coroutines, causing the subsequent
+        # multimodal API call to appear to "hang" in SSE streams.
+        data_urls = await prepare_for_multimodal_async(file_content, mime)
 
         import asyncio
 
@@ -428,13 +438,8 @@ class ConsultationService:
                     logger.info("[report %s] API call attempt %d, sending %d images...", record.id, attempt + 1, len(batch))
                     response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
                     logger.info("[report %s] API call attempt %d returned %d chars", record.id, attempt + 1, len(response.content))
-                    raw = response.content.strip()
-                    if raw.startswith("```"):
-                        lines = raw.split("\n")
-                        lines = [l for l in lines if not l.strip().startswith("```")]
-                        raw = "\n".join(lines)
-                    parsed = json.loads(raw)
-                    return parsed if isinstance(parsed, dict) else {}
+                    # P0-3: unified JSON parsing (handles markdown fences, prose, trailing commas)
+                    return parse_model_json(response.content)
                 except Exception as e:
                     last_err = e
                     logger.warning("Image extraction attempt %d failed: %s", attempt + 1, e)

@@ -5,8 +5,38 @@ import base64
 import io
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+
+def parse_model_json(raw: str) -> dict:
+    """Parse JSON from model output, handling common formatting issues.
+
+    Handles:
+    - Markdown code blocks (```json ... ```)
+    - Leading/trailing prose ("以下是结果：\n{...}")
+    - Trailing commas before closing brackets
+    """
+    raw = raw.strip()
+
+    # Strip markdown code fences
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        raw = "\n".join(lines).strip()
+
+    # If there's prose before the JSON, find the first { and last }
+    first_brace = raw.find("{")
+    last_brace = raw.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        raw = raw[first_brace : last_brace + 1]
+
+    # Remove trailing commas (common model mistake)
+    raw = re.sub(r",\s*([}\]])", r"\1", raw)
+
+    result = json.loads(raw)
+    return result if isinstance(result, dict) else {}
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_LONG_EDGE = 2048
@@ -78,6 +108,19 @@ def prepare_for_multimodal(raw: bytes, mime: str) -> list[str]:
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         data_urls.append(f"data:image/jpeg;base64,{b64}")
     return data_urls
+
+
+async def prepare_for_multimodal_async(raw: bytes, mime: str) -> list[str]:
+    """Async wrapper — runs the CPU-bound PDF conversion in a thread.
+
+    The sync version (prepare_for_multimodal) calls fitz/Pillow which are
+    blocking C libraries. Calling it directly inside an async event loop
+    (e.g. SSE chat_stream) blocks all other coroutines until conversion
+    finishes, which can cause multimodal API calls to appear to "hang".
+    """
+    import asyncio
+
+    return await asyncio.to_thread(prepare_for_multimodal, raw, mime)
 
 
 # 多模态 API 单轮图片数上限(实测确定 = 4)。
@@ -214,12 +257,7 @@ async def reduce_extraction(
     ]
     try:
         response = await text_provider.chat(messages, temperature=0.1, max_tokens=4096)
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            raw = "\n".join(lines)
-        result = json.loads(raw)
+        result = parse_model_json(response.content)
         if isinstance(result, dict):
             logger.info("Reduce step: successfully consolidated %d metrics → %d, %d lab_tests → %d, %d exam_findings → %d",
                         len(merged_data.get("metrics", [])), len(result.get("metrics", [])),
