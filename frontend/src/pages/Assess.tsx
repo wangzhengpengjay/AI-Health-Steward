@@ -50,6 +50,18 @@ function ScaleCard({ detail, memberId }: { detail: ScaleDetail; memberId: number
       {detail.reason && !open && (
         <p className="mt-2 text-xs text-slate-400">{detail.reason}</p>
       )}
+      {detail.last_result && !open && (
+        <div className="mt-2 flex items-center gap-2 text-xs">
+          <span className="text-slate-400">上次结果：</span>
+          <span className="font-medium text-slate-600">{detail.last_result.total_score} 分</span>
+          <span className={`rounded-full border px-2 py-0.5 ${RISK_STYLE[detail.last_result.risk_level] ?? 'bg-slate-50 text-slate-600'}`}>
+            {detail.last_result.risk_label}
+          </span>
+          {detail.last_result.created_at && (
+            <span className="text-slate-400">{new Date(detail.last_result.created_at).toLocaleDateString()}</span>
+          )}
+        </div>
+      )}
 
       <button
         onClick={() => setOpen(!open)}

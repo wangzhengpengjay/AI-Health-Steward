@@ -103,15 +103,24 @@ interface HistoryMessage {
   created_at: string
 }
 
+interface ChatHistoryResponse {
+  messages: HistoryMessage[]
+  has_more: boolean
+}
+
 export const chatApi = {
-  getHistory: async (memberId: number): Promise<HistoryMessage[]> => {
-    const res = await fetch(`${BASE_URL}/members/${memberId}/chat/history`)
+  getHistory: async (memberId: number, limit?: number, beforeId?: number): Promise<ChatHistoryResponse> => {
+    const params = new URLSearchParams()
+    if (limit) params.set('limit', String(limit))
+    if (beforeId) params.set('before_id', String(beforeId))
+    const qs = params.toString() ? `?${params}` : ''
+    const res = await fetch(`${BASE_URL}/members/${memberId}/chat/history${qs}`)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status)
     }
     const data = await res.json()
-    return data.messages ?? []
+    return { messages: data.messages ?? [], has_more: data.has_more ?? false }
   },
 
   send: async (memberId: number, message: string, file?: File): Promise<ChatResponse> => {
@@ -639,10 +648,18 @@ export interface ScaleThreshold {
   advice: string
 }
 
+export interface ScaleLastResult {
+  total_score: number
+  risk_level: string
+  risk_label: string
+  created_at: string | null
+}
+
 export interface ScaleDetail extends ScaleMeta {
   questions: ScaleQuestion[]
   scoring: string
   thresholds?: ScaleThreshold[]
+  last_result?: ScaleLastResult | null
 }
 
 export interface ScaleResult {

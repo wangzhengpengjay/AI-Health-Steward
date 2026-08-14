@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.family import FamilyMember
 from app.models.health import MetricRecord, Diagnosis, Medication, ReportRecord
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/members", tags=["reports"])
 MAX_FILE_SIZE = 20 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
+UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -149,6 +150,7 @@ def _report_to_response(r: ReportRecord) -> ReportRecordResponse:
         try:
             extraction = ExtractionResult(**json.loads(r.extraction))
         except Exception:
+            logger.warning("Failed to parse extraction JSON for report %s", r.id)
             extraction = None
     return ReportRecordResponse(
         id=r.id,

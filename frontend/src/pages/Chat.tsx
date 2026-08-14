@@ -46,9 +46,9 @@ export default function Chat() {
     setIsLoadingHistory(true)
     chatApi
       .getHistory(id)
-      .then((history) => {
+      .then(({ messages }) => {
         if (cancelled) return
-        const restored: ChatMessage[] = history.map((h) => ({
+        const restored: ChatMessage[] = messages.map((h) => ({
           role: h.role as 'user' | 'assistant',
           content: h.content,
           timestamp: h.created_at || new Date().toISOString(),

@@ -116,21 +116,33 @@ async def _ensure_member(db: AsyncSession, member_id: int) -> None:
 @router.get("/{member_id}/chat/history", response_model=ChatHistoryResponse)
 async def chat_history(
     member_id: int,
+    limit: int = 50,
+    before_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> ChatHistoryResponse:
     """Return the member's persisted webui chat history (ascending).
 
-    The webui is a single continuous conversation stream per member, so we load
-    the full webui history so the page can restore the previous conversation on
-    every visit.
+    Paginated: loads up to `limit` messages. If `before_id` is provided,
+    loads messages with id < before_id (for infinite scroll / load-more).
+    The frontend should request the first page without before_id, then
+    pass the oldest message id as before_id to load older messages.
     """
     await _ensure_member(db, member_id)
-    result = await db.execute(
+    limit = min(limit, 200)  # hard cap
+    stmt = (
         select(ChatMessage)
         .where(ChatMessage.member_id == member_id, ChatMessage.source == "webui")
-        .order_by(ChatMessage.id.asc())
+        .order_by(ChatMessage.id.desc())
+        .limit(limit + 1)  # fetch one extra to check has_more
     )
-    rows = result.scalars().all()
+    if before_id is not None:
+        stmt = stmt.where(ChatMessage.id < before_id)
+    result = await db.execute(stmt)
+    rows = list(result.scalars().all())
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+    rows.reverse()  # back to ascending order
     messages = [
         HistoryMessage(
             id=r.id,
@@ -140,7 +152,7 @@ async def chat_history(
         )
         for r in rows
     ]
-    return ChatHistoryResponse(messages=messages)
+    return ChatHistoryResponse(messages=messages, has_more=has_more)
 
 
 @router.post("/{member_id}/chat", response_model=ChatResponse)

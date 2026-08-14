@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
 
+    # Upload directory for report files
+    UPLOAD_DIR: str = "/app/uploads"
+
     @property
     def DATABASE_URL(self) -> str:
         return (
