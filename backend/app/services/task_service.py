@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils import metric_label as _metric_label
 from app.models.tasks import HealthTask
 
 logger = logging.getLogger(__name__)
@@ -237,19 +238,3 @@ async def dismiss_task(db: AsyncSession, task_id: int) -> HealthTask | None:
     task.dismissed_at = datetime.now(timezone.utc)
     await db.flush()
     return task
-
-
-def _metric_label(name: str) -> str:
-    labels = {
-        "systolic_blood_pressure": "血压",
-        "diastolic_blood_pressure": "血压",
-        "fasting_glucose": "空腹血糖",
-        "heart_rate": "心率",
-        "total_cholesterol": "总胆固醇",
-        "ldl_cholesterol": "低密度脂蛋白",
-        "hdl_cholesterol": "高密度脂蛋白",
-        "triglycerides": "甘油三酯",
-        "bmi": "BMI",
-        "weight": "体重",
-    }
-    return labels.get(name, name)

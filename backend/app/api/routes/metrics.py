@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.utils import compute_age as _age
 from app.models.family import FamilyMember
 from app.models.health import MetricRecord
 from app.schemas.health import MetricRecordCreate, MetricRecordResponse, MetricRecordUpdate
@@ -168,14 +169,3 @@ async def _ensure_member(db: AsyncSession, member_id: int) -> FamilyMember:
             detail=f"FamilyMember {member_id} not found",
         )
     return member
-
-
-def _age(birth_date) -> int | None:
-    """Compute age in years from birth_date (may be date or None)."""
-    if not birth_date:
-        return None
-    from datetime import date
-    today = date.today()
-    return today.year - birth_date.year - (
-        (today.month, today.day) < (birth_date.month, birth_date.day)
-    )

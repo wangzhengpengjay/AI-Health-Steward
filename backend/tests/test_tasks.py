@@ -43,7 +43,7 @@ async def test_critical_metric_generates_immediate_task():
     assert task.task_type == "recheck"
     assert task.priority == "critical"
     assert task.due_date == date.today()
-    assert "血压" in task.title
+    assert "收缩压" in task.title
 
 
 @pytest.mark.asyncio

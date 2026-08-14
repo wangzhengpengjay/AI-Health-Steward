@@ -20,31 +20,10 @@ from app.models.summaries import HealthSummary
 
 logger = logging.getLogger(__name__)
 
-_METRIC_LABELS: dict[str, str] = {
-    "systolic_blood_pressure": "收缩压",
-    "diastolic_blood_pressure": "舒张压",
-    "fasting_glucose": "空腹血糖",
-    "postmeal_glucose": "餐后2h血糖",
-    "postmeal_1h_glucose": "餐后1h血糖",
-    "random_glucose": "随机血糖",
-    "bedtime_glucose": "睡前血糖",
-    "heart_rate": "心率",
-    "total_cholesterol": "总胆固醇",
-    "triglycerides": "甘油三酯",
-    "ldl_cholesterol": "LDL-C",
-    "hdl_cholesterol": "HDL-C",
-    "weight": "体重",
-    "bmi": "BMI",
-}
-
 _PERIOD_LABELS: dict[str, str] = {"weekly": "周报", "monthly": "月报", "annual": "年报"}
 _PERIOD_DAYS: dict[str, int] = {"weekly": 7, "monthly": 30, "annual": 365}
 
-
-def _metric_label(name: str) -> str:
-    if name.startswith("lab:") or name.startswith("exam:"):
-        return name.split(":", 1)[-1]
-    return _METRIC_LABELS.get(name, name)
+from app.core.utils import metric_label as _metric_label
 
 
 async def _load_metrics(db: AsyncSession, member_id: int, start: date, end: date) -> list[MetricRecord]:
