@@ -87,7 +87,8 @@ EXTRACT_PROMPT = """\
       "finding_desc": "检查项目参数或诊断描述，如 P-R间期/右肺水平裂旁微小磨玻璃结节 等",
       "value_num": "可量化的数值或文本（复合值如 375/411 用文本）或null，如 P-R间期189则填189",
       "unit": "数值的单位或null，如 ms/mm",
-      "conclusion": "检查结论或建议或null，如 建议随诊/考虑良性 等"
+      "conclusion": "检查结论或建议或null，如 建议随诊/考虑良性 等",
+      "is_abnormal": "true表示该检查发现有异常（如结节、囊肿、心律失常），false表示正常（如窦性心律、正常范围心电图、视力正常）"
     }
   ],
   "summary": "报告摘要，1-3句话概述"
@@ -131,6 +132,7 @@ class ExamFindingItem(BaseModel):
     value_num: Optional[Any] = None
     unit: Optional[str] = None
     conclusion: Optional[str] = None
+    is_abnormal: bool = False
 
 class ExtractionResult(BaseModel):
     patient_name: Optional[str] = None
@@ -524,7 +526,7 @@ async def confirm_report(
             value=float(ef.value_num) if is_num_ef else 0,
             text_value=str(ef.value_num) if (ef.value_num is not None and not is_num_ef) else None,
             unit=ef.unit,
-            is_abnormal=True,
+            is_abnormal=ef.is_abnormal,
             measured_at=report_dt,
             source_type="report",
             context=f"{ef.finding_category}: {value_str} ({ef.conclusion or ''})",
