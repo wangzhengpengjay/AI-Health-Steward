@@ -266,15 +266,22 @@ async def generate_recommendation(
     profile = await build_health_profile(db, member_id)
     completeness = compute_completeness(profile)
 
+    from app.services.checkup_rules import generate_candidates
+    rule_result = generate_candidates(profile)
+
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
     budget_label = BUDGET_LABELS.get(budget_tier, BUDGET_LABELS["core"])
 
-    # Inject profile JSON and budget into the user message
+    # Inject profile JSON, deterministic candidates, and budget into the user message
     profile_json = json.dumps(profile, ensure_ascii=False, indent=2, default=str)
     user_message = (
         f"请使用以下用户健康画像进行体检推荐。\n\n"
         f"经济预算档位：{budget_label}\n\n"
-        f"【用户健康画像】\n{profile_json}"
+        f"【用户健康画像】\n{profile_json}\n\n"
+        f"【规则引擎已生成的候选项目】\n{json.dumps(rule_result, ensure_ascii=False, indent=2)}\n\n"
+        f"请基于以上候选项目生成最终方案。候选项目已包含分层(必查/建议查)、推荐理由、标签和频率。\n"
+        f"你的任务：1) 解释每个项目的医学意义；2) 按预算档位做手段适配（低档用经济手段查同样的病，不减病种）；\n"
+        f"3) 可补充候选集遗漏的项目（需说明理由）；4) 剔除C/D级项目并在末尾说明原因。"
     )
 
     messages = [
