@@ -102,6 +102,39 @@ class ConsultationService:
         self.tools = tool_registry
         self.db = db
 
+    async def _prepare_turn(
+        self,
+        member_id: int,
+        user_message: str,
+        conversation_history: list[Message] | None,
+        image_data_url: str | None,
+        source: str,
+    ) -> tuple[list[Message], list[dict[str, Any]], ModelProvider]:
+        """Common setup for chat() and chat_stream().
+
+        Returns (messages, tool_defs, provider) ready for the model call loop.
+        Handles: system prompt, history, user message persistence, image extraction.
+        """
+        system_prompt = await self._build_system_prompt(member_id, source)
+
+        if conversation_history is None:
+            conversation_history = await self._load_recent_history(member_id, source)
+        await self._save_message(member_id, "user", user_message, source)
+
+        if image_data_url is not None:
+            report_data = await self._create_report_record(member_id, image_data_url)
+            extracted_text = report_data.get("extraction_json", "")
+            logger.info("Image extraction done, length=%d", len(extracted_text))
+            system_prompt += (
+                f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，"
+                f"请基于此信息回答用户问题：]\n{extracted_text}"
+            )
+
+        provider = self.router.get_text_provider()
+        tool_defs = self.tools.get_all_tool_definitions()
+        messages = self._build_messages(user_message, system_prompt, conversation_history)
+        return messages, tool_defs, provider
+
     async def chat(
         self,
         member_id: int,
@@ -110,23 +143,9 @@ class ConsultationService:
         image_data_url: str | None = None,
         source: str = "webui",
     ) -> tuple[str, list[dict[str, Any]], str]:
-        has_vision = image_data_url is not None
-        system_prompt = await self._build_system_prompt(member_id, source)
-
-        if conversation_history is None:
-            conversation_history = await self._load_recent_history(member_id, source)
-        await self._save_message(member_id, "user", user_message, source)
-
-        if has_vision:
-            report_data = await self._create_report_record(member_id, image_data_url)
-            extracted_text = report_data.get("extraction_json", "")
-            system_prompt = system_prompt + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
-            provider = self.router.get_text_provider()
-        else:
-            provider = self.router.get_text_provider()
-
-        tool_defs = self.tools.get_all_tool_definitions()
-        messages = self._build_messages(user_message, system_prompt, conversation_history)
+        messages, tool_defs, provider = await self._prepare_turn(
+            member_id, user_message, conversation_history, image_data_url, source
+        )
 
         tool_call_records: list[dict[str, Any]] = []
         max_rounds = 5
@@ -174,23 +193,23 @@ class ConsultationService:
 
         event_type: "delta" (text chunk) or "report" (report record JSON).
         """
-        has_vision = image_data_url is not None
+        # Run extraction before _prepare_turn so we can yield the report card first
         system_prompt = await self._build_system_prompt(member_id, source)
-
         if conversation_history is None:
             conversation_history = await self._load_recent_history(member_id, source)
         await self._save_message(member_id, "user", user_message, source)
 
         report_data: dict | None = None
-        if has_vision:
+        if image_data_url is not None:
             report_data = await self._create_report_record(member_id, image_data_url)
             extracted_text = report_data.get("extraction_json", "")
             logger.info("Image extraction done, length=%d, starting text chat stream", len(extracted_text))
-            system_prompt = system_prompt + f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，请基于此信息回答用户问题：]\n{extracted_text}"
-            provider = self.router.get_text_provider()
-        else:
-            provider = self.router.get_text_provider()
+            system_prompt += (
+                f"\n\n[用户上传了一份报告，AI已自动提取以下结构化信息，"
+                f"请基于此信息回答用户问题：]\n{extracted_text}"
+            )
 
+        provider = self.router.get_text_provider()
         tool_defs = self.tools.get_all_tool_definitions()
         messages = self._build_messages(user_message, system_prompt, conversation_history)
 
@@ -280,16 +299,12 @@ class ConsultationService:
             logger.exception("Post-turn memory compaction raised for member %s", member_id)
 
     async def _create_report_record(self, member_id: int, image_data_url: str) -> dict:
-        """Create a ReportRecord, run single multimodal extraction, persist, and return dict.
+        """Create a ReportRecord, run multimodal extraction, persist, and return dict.
 
-        One multimodal call serves both: chat context AND report archive.
+        Orchestrates: parse → save record → build prompt → extract → persist.
         """
-        # Parse data URL: data:{mime};base64,{data}
-        header, b64_data = image_data_url.split(",", 1)
-        mime = header.split(":")[1].split(";")[0]
-        file_content = base64.b64decode(b64_data)
+        mime, file_content = self._parse_data_url(image_data_url)
         file_size = len(file_content)
-
         ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
         ext = ext_map.get(mime, ".bin")
         file_name = f"chat_upload_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}{ext}"
@@ -304,26 +319,59 @@ class ConsultationService:
         )
         self.db.add(record)
         await self.db.flush()
-        # P0-2: commit immediately so the extracting record is visible in DB.
-        # The extraction can take 60+ seconds for multi-page PDFs; holding an
-        # open transaction that long can cause connection pool exhaustion and
-        # makes the record invisible to other queries until extraction finishes.
-        await self.db.commit()
+        await self.db.commit()  # P0-2: commit before long extraction
 
-        # Save file to disk for thumbnail/preview
+        self._save_upload_file(record.id, ext, file_content)
+        prompt = await self._build_extract_prompt(member_id)
+
+        data, error = await self._run_multimodal_extraction(record, prompt, file_content, mime)
+        if error:
+            record.status = "rejected"
+            await self.db.flush()
+            await self.db.commit()
+            return {
+                "id": record.id,
+                "status": "rejected",
+                "error": str(error),
+                "extraction_json": f"[报告解析失败: {error}] 请用户描述报告内容。",
+            }
+
+        record.extraction = json.dumps(data, ensure_ascii=False)
+        record.report_type = data.get("report_type")
+        report_date_str = data.get("report_date")
+        record.report_date = datetime.fromisoformat(report_date_str) if report_date_str else None
+        record.summary = data.get("summary")
+        record.patient_name = data.get("patient_name")
+        record.status = "pending"
+        await self.db.flush()
+        await self.db.commit()
+        await self.db.refresh(record)
+        return self._record_to_dict(record, data)
+
+    @staticmethod
+    def _parse_data_url(image_data_url: str) -> tuple[str, bytes]:
+        """Parse a data URL into (mime, raw_bytes)."""
+        header, b64_data = image_data_url.split(",", 1)
+        mime = header.split(":")[1].split(";")[0]
+        return mime, base64.b64decode(b64_data)
+
+    @staticmethod
+    def _save_upload_file(record_id: int, ext: str, file_content: bytes) -> None:
+        """Save uploaded file to disk for thumbnail/preview."""
         from pathlib import Path
         import os
         upload_dir = Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
         upload_dir.mkdir(parents=True, exist_ok=True)
-        (upload_dir / f"{record.id}{ext}").write_bytes(file_content)
+        (upload_dir / f"{record_id}{ext}").write_bytes(file_content)
 
-        # Fetch family members for prompt context
+    async def _build_extract_prompt(self, member_id: int) -> str:
+        """Build extraction prompt with member list and existing tag hints."""
         members_result = await self.db.execute(
             select(FamilyMember).where(FamilyMember.is_deleted.is_(False))
         )
         members = members_result.scalars().all()
         member_names = ", ".join(f"{m.name}(关系:{m.member_relation})" for m in members)
-        # Fetch existing lab report_name tabs and exam category tabs for this member
+
         existing_result = await self.db.execute(
             select(MetricRecord.metric_name).where(
                 MetricRecord.member_id == member_id,
@@ -338,9 +386,12 @@ class ConsultationService:
         tabs_hint += f"\n已有检查分类标签：{existing_exam_cats}" if existing_exam_cats else "\n已有检查分类标签：无"
         tabs_hint += "\n重要：report_name 和 finding_category 必须优先复用已有标签，仅当无法匹配时才新建简短标准名。"
 
-        prompt = EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
+        return EXTRACT_PROMPT + f"\n\n当前家庭成员列表：{member_names}\n当前选中的成员ID：{member_id}{tabs_hint}"
 
-        multimodal = self.router.get_multimodal_provider()
+    async def _run_multimodal_extraction(
+        self, record: ReportRecord, prompt: str, file_content: bytes, mime: str,
+    ) -> tuple[dict | None, Exception | None]:
+        """Run Map-Reduce multimodal extraction. Returns (data, error)."""
         from app.services.image_utils import (
             MAX_IMAGES_PER_ROUND,
             chunk_data_urls,
@@ -349,16 +400,12 @@ class ConsultationService:
             prepare_for_multimodal_async,
             reduce_extraction,
         )
-        # P0-1: use async version to avoid blocking the event loop.
-        # fitz/Pillow are synchronous C libraries; running them directly in the
-        # async event loop blocks all coroutines, causing the subsequent
-        # multimodal API call to appear to "hang" in SSE streams.
-        data_urls = await prepare_for_multimodal_async(file_content, mime)
-
         import asyncio
 
+        multimodal = self.router.get_multimodal_provider()
+        data_urls = await prepare_for_multimodal_async(file_content, mime)
+
         async def extract_batch(batch: list[str], page_hint: str) -> dict:
-            """Extract structured JSON from one batch of image data URLs (≤ per-round limit)."""
             user_content: list[dict] = [
                 {"type": "text", "text": f"请解析这份健康报告{page_hint}并提取结构化数据, 只提取本批图片中出现的数据, 用相同JSON格式"},
             ]
@@ -374,7 +421,6 @@ class ConsultationService:
                     logger.info("[report %s] API call attempt %d, sending %d images...", record.id, attempt + 1, len(batch))
                     response = await multimodal.chat(messages, temperature=0.1, max_tokens=4096)
                     logger.info("[report %s] API call attempt %d returned %d chars", record.id, attempt + 1, len(response.content))
-                    # P0-3: unified JSON parsing (handles markdown fences, prose, trailing commas)
                     return parse_model_json(response.content)
                 except Exception as e:
                     last_err = e
@@ -395,45 +441,23 @@ class ConsultationService:
                 logger.info("[report %s] Batch %d/%d done", record.id, idx + 1, len(batches))
             except Exception as e:
                 last_err = e
-                logger.error(
-                    "Batch %d/%d extraction failed for report %s: %s",
-                    idx + 1, len(batches), record.id, e,
-                )
+                logger.error("Batch %d/%d extraction failed for report %s: %s", idx + 1, len(batches), record.id, e)
 
         if not batch_results:
-            logger.error("Image extraction failed (all batches) for report %s", record.id)
-            record.status = "rejected"
-            await self.db.flush()
-            await self.db.commit()
-            return {
-                "id": record.id,
-                "status": "rejected",
-                "error": str(last_err),
-                "extraction_json": f"[报告解析失败: {last_err}] 请用户描述报告内容。",
-            }
+            return None, last_err or RuntimeError("all batches failed")
 
         data = normalize_extraction(merge_extractions(batch_results))
-
-        # Reduce step: if multiple batches, use text LLM to consolidate
         if len(batch_results) > 1:
             try:
                 text_provider = self.router.get_text_provider()
                 data = await reduce_extraction(data, text_provider)
             except Exception as e:
                 logger.warning("Reduce step skipped (%s), using merged data as-is", e)
+        return data, None
 
-        # Success — persist extraction
-        record.extraction = json.dumps(data, ensure_ascii=False)
-        record.report_type = data.get("report_type")
-        report_date_str = data.get("report_date")
-        record.report_date = datetime.fromisoformat(report_date_str) if report_date_str else None
-        record.summary = data.get("summary")
-        record.patient_name = data.get("patient_name")
-        record.status = "pending"
-        await self.db.flush()
-        await self.db.commit()
-        await self.db.refresh(record)
-
+    @staticmethod
+    def _record_to_dict(record: ReportRecord, data: dict) -> dict:
+        """Convert a ReportRecord + extraction data into a response dict."""
         return {
             "id": record.id,
             "member_id": record.member_id,
