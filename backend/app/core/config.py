@@ -74,8 +74,12 @@ class Settings(BaseSettings):
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
 
-    # Upload directory for report files
-    UPLOAD_DIR: str = "/app/uploads"
+    # Upload directory for report files.
+    # Default resolves relative to the backend package root: in the Docker image
+    # that is /app (so /app/uploads, matching the compose `upload_data` volume),
+    # and locally it becomes <repo>/backend/uploads. This lets the app run and
+    # tests collect without a manual UPLOAD_DIR override.
+    UPLOAD_DIR: str = str(Path(__file__).resolve().parents[2] / "uploads")
 
     @property
     def DATABASE_URL(self) -> str:
