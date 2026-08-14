@@ -1,7 +1,7 @@
 # 本地 AI 健康管家 - 项目总览
 
 > 本文档是项目的导航入口，说明文件架构、每份文件的作用、当前进度和下一步。
-> 最后更新：2026-08-14（V1.2 完成，V1.3 新功能规划中）
+> 最后更新：2026-08-14（V1.2 完成，V1.3 新功能方向探索中）
 
 ---
 
@@ -293,7 +293,19 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 3. **端到端联调** — Docker 三容器运行中，核心流程已验证
 4. **发布收尾** — 生成示例数据、补充截图、确认 README_EN 同步
 
-### 7.2 建议后续方向（V1.3+）
+### 7.2 V1.3 新功能方向探索（进行中 🔍）
+
+已完成 13 个方向的头脑风暴与行业调研，分为三组：
+
+**主动服务方向（①-⑥）**：JITAI 智能随访、TTM 目标教练、报告解读推送、多信号风险预警、家庭健康协调者（⭐最高差异化）、健康决策中枢
+
+**健康延伸方向（⑦-⑫）**：保险方案推荐、就医资源导航、数字疗法引擎、家庭照护协调、健康商城推荐、用药管理深化
+
+**专业底座方向（⑬）**：循证医学知识引擎 — 让 AI 的每句话都有出处
+
+> 详细调研与方向分析见 `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md`
+
+### 7.3 原有建议后续方向（V1.3+）
 
 - **数据趋势可视化深化**：多指标同图对比、历史报告对比、趋势预警线
 - **用药管理页**：独立用药管理界面（目前只有数据表无前端页面）
@@ -314,6 +326,7 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 | 看某个功能的详细需求 | `openspec/changes/ai-health-steward/specs/<capability>/spec.md` |
 | 看 UI 设计规范 | `openspec/changes/ai-health-steward/UI-DESIGN-SYSTEM.md` |
 | 看 PRD 评审结论 | `openspec/changes/ai-health-steward/PRD-REVIEW-R2.md` |
+| 看 V1.3 方向探索 | `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md` |
 | 看后端代码 | `backend/app/`（main.py 入口） |
 | 看前端代码 | `frontend/src/`（App.tsx 路由入口） |
 | 校验 OpenSpec 状态 | `cd ai-native && openspec validate ai-health-steward --json` |
