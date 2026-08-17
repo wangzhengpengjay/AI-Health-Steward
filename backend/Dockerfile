@@ -4,9 +4,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
-    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null \
-    || true
+# Use official Debian mirrors (aliyun trixie mirror is unreliable as of 2026-08)
+ENV http_proxy=http://host.docker.internal:7897 \
+    https_proxy=http://host.docker.internal:7897
 
 WORKDIR /app
 

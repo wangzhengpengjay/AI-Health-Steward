@@ -270,3 +270,60 @@ async def wipe_all_data(
         await db.execute(delete(model))
     await db.commit()
     return {"deleted": True, "message": "所有健康数据已清除"}
+
+
+# ---- User data directory ----
+
+@router.get("/userdata")
+async def get_userdata_config() -> dict[str, Any]:
+    """Return current userdata directory path."""
+    return {
+        "userdata_dir": settings.USERDATA_DIR,
+        "exists": os.path.isdir(settings.USERDATA_DIR),
+    }
+
+
+class UserDataPathUpdate(BaseModel):
+    new_path: str
+
+
+@router.put("/userdata")
+async def update_userdata_path(payload: UserDataPathUpdate) -> dict[str, Any]:
+    """Move userdata directory to a new location and update .env."""
+    import shutil
+    from pathlib import Path
+
+    old_path = Path(settings.USERDATA_DIR)
+    new_path = Path(payload.new_path).expanduser().resolve()
+
+    if new_path == old_path:
+        return {"updated": False, "message": "新路径与当前路径相同"}
+
+    new_path.mkdir(parents=True, exist_ok=True)
+
+    # Move contents
+    if old_path.exists() and old_path != new_path:
+        for item in old_path.iterdir():
+            dest = new_path / item.name
+            if dest.exists():
+                shutil.rmtree(str(dest)) if dest.is_dir() else dest.unlink()
+            shutil.move(str(item), str(dest))
+
+    # Update .env
+    env_path = get_settings().env_file_path
+    _update_env_file(env_path, {"USERDATA_DIR": str(new_path)})
+    os.environ["USERDATA_DIR"] = str(new_path)
+
+    # Clear cache so settings reload
+    from app.core.config import get_settings as _gs
+    _gs.cache_clear()
+
+    return {
+        "updated": True,
+        "old_path": str(old_path),
+        "new_path": str(new_path),
+        "message": (
+            "文件已迁移。如果使用 Docker，请同时更新 .env 中的 "
+            "USERDATA_HOST_DIR 并重启容器使 bind mount 生效。"
+        ),
+    }

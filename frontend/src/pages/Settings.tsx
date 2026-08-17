@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, feishuApi, membersApi, type ProviderConfig, type ProviderUpdatePayload, type FeishuChannel } from '@/lib/api'
 import { useChatStore } from '@/stores/chatStore'
@@ -23,10 +23,17 @@ export default function Settings() {
   const [wipeResult, setWipeResult] = useState<string | null>(null)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
+  const [userdataPath, setUserdataPath] = useState('')
+  const [userDataMsg, setUserDataMsg] = useState<string | null>(null)
+
   const { data: providers, isLoading } = useQuery({
     queryKey: ['settings-providers'],
     queryFn: settingsApi.getProviders,
   })
+
+  useEffect(() => {
+    settingsApi.getUserdataConfig().then((cfg) => setUserdataPath(cfg.userdata_dir)).catch(() => {})
+  }, [])
 
   const { data: feishuChannels, refetch: refetchFeishu } = useQuery({
     queryKey: ['feishu-channels'],
@@ -456,12 +463,48 @@ export default function Settings() {
                 </div>
               </div>
             )}
-            {wipeResult && <p className="mt-2 text-sm text-emerald-600">{wipeResult}</p>}
+           {wipeResult && <p className="mt-2 text-sm text-emerald-600">{wipeResult}</p>}
+         </div>
+       </div>
+     </section>
+
+      {/* Storage Location */}
+      <section>
+        <h2 className="mb-3 text-sm font-medium text-slate-500">资料存储位置</h2>
+        <div className="rounded-card border border-slate-200 bg-bg-primary p-5">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="material-symbols-rounded text-xl text-primary">folder_open</span>
+            <h3 className="font-medium text-slate-800">健康资料文件夹</h3>
           </div>
+          <p className="mb-4 text-sm text-slate-500">
+            报告文件按成员/年度/月份分类存储在此文件夹中，可直接在系统文件管理器中查看。
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={userdataPath}
+              onChange={(e) => setUserdataPath(e.target.value)}
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 focus:border-primary focus:outline-none"
+              placeholder="如 ~/Documents/健康管家"
+            />
+            <button
+              onClick={() => {
+                settingsApi.updateUserdataPath(userdataPath).then((res) => {
+                  setUserDataMsg(res.message)
+                  settingsApi.getUserdataConfig().then((cfg) => setUserdataPath(cfg.userdata_dir))
+                })
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm text-white transition hover:bg-primary-hover"
+            >
+              <span className="material-symbols-rounded text-base">drive_folder_upload</span>
+              迁移
+            </button>
+          </div>
+          {userDataMsg && <p className="mt-2 text-sm text-emerald-600">{userDataMsg}</p>}
         </div>
       </section>
 
-      {/* System Info */}
+     {/* System Info */}
       <section>
         <h2 className="mb-3 text-sm font-medium text-slate-500">系统信息</h2>
         <div className="rounded-card border border-slate-200 bg-bg-primary p-5">

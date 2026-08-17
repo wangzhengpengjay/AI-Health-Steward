@@ -360,7 +360,8 @@ class ConsultationService:
         """Save uploaded file to disk for thumbnail/preview."""
         from pathlib import Path
         from app.core.config import settings
-        upload_dir = Path(settings.UPLOAD_DIR)
+        # Stage in USERDATA_DIR root (will be relocated on confirm)
+        upload_dir = Path(settings.USERDATA_DIR)
         upload_dir.mkdir(parents=True, exist_ok=True)
         (upload_dir / f"{record_id}{ext}").write_bytes(file_content)
 

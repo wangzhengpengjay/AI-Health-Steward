@@ -1,0 +1,82 @@
+# ==========================================================================
+# Production / private-deployment compose profile.
+#
+# Purpose: run the stack WITHOUT the development-only resource overhead.
+# The default docker-compose.yml starts the backend with `uvicorn --reload`
+# plus WATCHFILES_FORCE_POLLING=true (development hot-reload). On a
+# private/home always-on host that burns CPU continuously polling the source
+# tree even when idle.
+#
+# This profile instead:
+#   - backend: uses the image's production CMD (no --reload, no --reload-dir),
+#     disables the watchfiles polling override, and sets APP_DEBUG=false so
+#     SQL echo + verbose logging are off.
+#   - frontend: serves the pre-built production bundle (vite preview) instead
+#     of the live Vite dev server.
+#   - removes the host source bind-mount (image code is used), keeping only the
+#     persistent `userdata` volume.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Data (postgres `pgdata` + ./userdata) is shared with the dev compose file.
+# ==========================================================================
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: health-steward-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-health_steward}
+      POSTGRES_USER: ${POSTGRES_USER:-health}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-health}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: health-steward-backend
+    env_file: backend/.env
+    environment:
+      # Production: no hot-reload watcher. `--reload` and the
+      # WATCHFILES_FORCE_POLLING override (used by the dev compose) are both
+      # dropped, so idle CPU drops to ~0 instead of polling the source tree.
+      APP_DEBUG: "false"
+      # User health data: still persisted to the host so files are visible.
+      USERDATA_DIR: "/app/userdata"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent user data (reports/uploads). Source is NOT bind-mounted in
+      # production — the image's built-in code is used.
+      - ${USERDATA_HOST_DIR:-./userdata}:/app/userdata
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # No `command` override: inherits the image's production CMD
+    #   uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: health-steward-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    # No `command` override: serves the pre-built bundle via `vite preview`
+    #   npm run preview -- --host 0.0.0.0 --port 5173
+    # (the dev image uses `vite` live server instead.)
+
+volumes:
+  pgdata:

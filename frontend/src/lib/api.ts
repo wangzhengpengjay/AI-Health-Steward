@@ -491,12 +491,21 @@ export const settingsApi = {
       return res.blob()
     }),
 
-  wipeData: () =>
-    request<{ deleted: boolean; message: string }>('/settings/data?confirm=DELETE', {
-      method: 'DELETE',
+ wipeData: () =>
+   request<{ deleted: boolean; message: string }>('/settings/data?confirm=DELETE', {
+     method: 'DELETE',
+   }),
+
+  getUserdataConfig: () =>
+    request<{ userdata_dir: string; exists: boolean }>('/settings/userdata'),
+
+  updateUserdataPath: (newPath: string) =>
+    request<{ updated: boolean; old_path: string; new_path: string; message: string }>('/settings/userdata', {
+      method: 'PUT',
+      body: JSON.stringify({ new_path: newPath }),
     }),
 
-  updateProviders: (data: ProviderUpdatePayload) =>
+ updateProviders: (data: ProviderUpdatePayload) =>
     request<{ updated: boolean; fields: string[]; message: string }>('/settings/providers', {
       method: 'PUT',
       body: JSON.stringify(data),

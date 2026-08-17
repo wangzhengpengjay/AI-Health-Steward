@@ -28,11 +28,14 @@ services:
       # 会导致 uvicorn --reload 检测不到代码变化(reload 后仍跑旧代码,
       # 流式 SSE 缺失 [DONE] 使前端卡在"持续输出"). 强制轮询以根治.
       WATCHFILES_FORCE_POLLING: "true"
+      USERDATA_DIR: "/app/userdata"
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - upload_data:/app/uploads
+      # User health data: bind-mounted to host so files are visible & persistent.
+      # Host path configurable via env (default ./userdata).
+      - ${USERDATA_HOST_DIR:-./userdata}:/app/userdata
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,4 +57,3 @@ services:
 
 volumes:
   pgdata:
-  upload_data:

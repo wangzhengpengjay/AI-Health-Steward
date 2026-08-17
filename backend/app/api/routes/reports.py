@@ -33,6 +33,50 @@ UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+EXT_MAP = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+
+
+def _resolve_file_path(record: ReportRecord) -> Path:
+    """Find a report's file on disk — try structured path (file_name) then legacy (id.ext)."""
+    if record.file_name and "/" in record.file_name:
+        p = Path(settings.USERDATA_DIR) / record.file_name
+        if p.exists():
+            return p
+    ext = EXT_MAP.get(record.file_type, ".bin")
+    legacy = UPLOAD_DIR / f"{record.id}{ext}"
+    if legacy.exists():
+        return legacy
+    raise FileNotFoundError(f"Report file not found for record {record.id}")
+
+
+async def _relocate_to_structured(db, record: ReportRecord, member: FamilyMember) -> None:
+    """Move a report file from legacy path to structured member/year/month path."""
+    from app.services.file_storage import build_file_path
+    ext = EXT_MAP.get(record.file_type, ".bin")
+    old_path = _resolve_file_path(record)
+    if not old_path.exists():
+        return
+    report_date = record.report_date
+    new_path = build_file_path(
+        member_name=member.name,
+        report_type=record.report_type,
+        report_date=report_date,
+        ext=ext,
+        member_id=member.id,
+    )
+    if new_path == old_path:
+        return
+    if new_path.exists():
+        new_path = new_path.with_name(f"{new_path.stem}_{record.id}{new_path.suffix}")
+    import shutil
+    shutil.move(str(old_path), str(new_path))
+    try:
+        rel = new_path.relative_to(Path(settings.USERDATA_DIR))
+        record.file_name = str(rel)
+    except ValueError:
+        record.file_name = new_path.name
+
+
 # ---- Schemas ----
 
 class MetricItem(BaseModel):
@@ -136,8 +180,7 @@ def _save_and_convert(file: UploadFile, record_id: int) -> tuple[str, str, int]:
     if mime not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail=f"不支持的文件类型: {mime}，仅支持 JPG/PNG/WebP/PDF")
     # Save to disk
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
-    ext = ext_map.get(mime, ".bin")
+    ext = EXT_MAP.get(mime, ".bin")
     file_path = UPLOAD_DIR / f"{record_id}{ext}"
     file_path.write_bytes(content)
     b64 = base64.b64encode(content).decode("utf-8")
@@ -227,8 +270,7 @@ async def upload_report(
     await db.commit()
 
     # Save file to disk using record.id
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
-    ext = ext_map.get(mime, ".bin")
+    ext = EXT_MAP.get(mime, ".bin")
     file_path = UPLOAD_DIR / f"{record.id}{ext}"
     file_path.write_bytes(content)
 
@@ -479,6 +521,21 @@ async def confirm_report(
     record.saved_lab_tests = saved_lab_tests
     record.saved_exam_findings = saved_exam_findings
 
+    # Update report metadata from extraction for file naming
+    record.report_type = ext.report_type or record.report_type
+    record.report_date = report_dt if ext.report_date else record.report_date
+
+    # Move file to structured path: member_name/year/month/report_name_date.ext
+    try:
+        member = await db.get(FamilyMember, member_id)
+        if member:
+            await _relocate_to_structured(db, record, member)
+            # Sync summary .md files into the member's folder
+            from app.services.file_storage import sync_summary_files
+            await sync_summary_files(db, member_id)
+    except Exception as e:
+        logger.warning("Failed to relocate file for report %s: %s", record.id, e)
+
     await db.flush()
 
     # Generate embedding for RAG (non-blocking: failure won't affect archival)
@@ -517,11 +574,10 @@ async def get_report_file(
     r = result.scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=404, detail="报告不存在")
-    # Find file on disk
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
-    ext = ext_map.get(r.file_type, ".bin")
-    file_path = UPLOAD_DIR / f"{report_id}{ext}"
-    if not file_path.exists():
+    # Find file on disk (structured path or legacy)
+    try:
+        file_path = _resolve_file_path(r)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="文件未找到")
     from fastapi.responses import FileResponse
     return FileResponse(path=str(file_path), media_type=r.file_type)
@@ -570,10 +626,9 @@ async def retry_extraction(
     if record.status not in ("rejected", "cancelled", "uploaded"):
         raise HTTPException(status_code=400, detail=f"当前状态 {record.status} 不可重试")
 
-    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
-    ext = ext_map.get(record.file_type, ".bin")
-    file_path = UPLOAD_DIR / f"{record.id}{ext}"
-    if not file_path.exists():
+    try:
+        file_path = _resolve_file_path(record)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="原始文件未找到")
     content = file_path.read_bytes()
     b64 = base64.b64encode(content).decode("utf-8")

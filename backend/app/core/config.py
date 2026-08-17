@@ -74,11 +74,12 @@ class Settings(BaseSettings):
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
 
-    # Upload directory for report files.
-    # Default resolves relative to the backend package root: in the Docker image
-    # that is /app (so /app/uploads, matching the compose `upload_data` volume),
-    # and locally it becomes <repo>/backend/uploads. This lets the app run and
-    # tests collect without a manual UPLOAD_DIR override.
+    # User data directory for health files (reports, summaries).
+    # Docker: /app/userdata (bind-mounted to host via docker-compose).
+    # Local dev: ~/Documents/健康管家 (visible in Finder/Documents).
+    USERDATA_DIR: str = str(Path.home() / "Documents" / "健康管家")
+
+    # Legacy upload dir (kept for backward-compat file reads).
     UPLOAD_DIR: str = str(Path(__file__).resolve().parents[2] / "uploads")
 
     @property

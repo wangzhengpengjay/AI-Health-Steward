@@ -1,0 +1,11 @@
+# Exclude source, build & secrets from the image.
+# The image serves the production build (`dist`) via `vite preview`.
+node_modules/
+dist/
+.env
+.env.*
+.vite/
+__pycache__/
+.git/
+.gitignore
+Dockerfile

@@ -1,0 +1,13 @@
+# Exclude secrets, local data and caches from the image.
+# The image ships its own built code; dev bind-mounts source over it.
+.env
+.env.*
+userdata
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.git/
+.gitignore
+README.md
+Dockerfile
