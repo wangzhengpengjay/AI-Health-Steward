@@ -53,3 +53,4 @@ backend/alembic/versions/*.pyc
 openspec/
 OVERVIEW.md
 docs/
+userdata/
