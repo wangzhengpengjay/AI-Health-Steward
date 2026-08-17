@@ -16,20 +16,32 @@
 backend/app/
 ├── api/
 │   ├── routes/          # 路由模块
-│   │   ├── members.py     # 家庭成员 CRUD
-│   │   ├── metrics.py     # 指标查询与手动录入
-│   │   ├── chat.py        # AI 咨询（SSE 流式）
-│   │   ├── reports.py     # 报告上传/抽取/确认/状态机
-│   │   ├── checkup.py     # 体检推荐
-│   │   ├── settings.py    # 系统设置与配置管理
-│   │   └── feishu.py      # 飞书渠道管理
-│   └── v1/router.py     # 路由聚合
+│   │   ├── members.py       # 家庭成员 CRUD
+│   │   ├── metrics.py       # 指标查询与手动录入
+│   │   ├── chat.py          # AI 咨询（SSE 流式 + 历史分页）
+│   │   ├── reports.py       # 报告上传/抽取/确认/状态机
+│   │   ├── checkup.py       # 体检推荐
+│   │   ├── profile.py       # 健康画像 CRUD
+│   │   ├── scales.py        # 风险自测量表（V1.1）
+│   │   ├── tasks.py         # 待办任务管理（V1.1）
+│   │   ├── summaries.py     # 健康小结（V1.1）
+│   │   ├── settings.py      # 系统设置与配置管理
+│   │   ├── providers.py     # 模型 Provider 状态查询
+│   │   └── feishu.py        # 飞书渠道管理
+│   └── v1/router.py     # 路由聚合（挂载全局鉴权）
 ├── core/
-│   ├── config.py          # Pydantic Settings（从 .env 加载）
-│   └── database.py        # 异步 SQLAlchemy 引擎
+│   ├── config.py          # Pydantic Settings（从 .env 加载，含 USERDATA_DIR）
+│   ├── database.py        # 异步 SQLAlchemy 引擎
+│   ├── security.py        # Bearer Token 鉴权 + 滑动窗口限流
+│   ├── reference_ranges.py # 成人/儿童参考范围 + 临床危急值
+│   └── utils.py           # 工具函数（compute_age / metric_label / parse_model_json）
 ├── models/
 │   ├── family.py          # 家庭成员模型
-│   └── health.py          # 健康数据模型（A-H 字段族 + 报告 + 体检 + 向量）
+│   ├── health.py          # 健康数据模型（A-H 字段族 + 报告 + 体检 + 向量）
+│   ├── assessments.py     # 量表测评结果模型（V1.1）
+│   ├── tasks.py           # 健康待办任务模型（V1.1）
+│   ├── summaries.py       # 健康小结模型（V1.1）
+│   └── feishu.py          # 飞书渠道配置模型
 ├── providers/
 │   ├── base.py            # ModelProvider 抽象接口
 │   ├── multimodal.py      # 多模态 API provider
@@ -39,6 +51,16 @@ backend/app/
 │   └── router.py          # 模型路由器
 ├── services/
 │   ├── consultation.py    # AI 咨询编排（多模态抽取→文字解读→工具调用）
+│   ├── extractor.py       # 指标抽取（多批次 Map-Reduce + 合并）
+│   ├── extraction_rules.py # 抽取后处理规则（去重/标准化）
+│   ├── image_utils.py     # 图片预处理（方向校正/压缩）
+│   ├── file_storage.py    # 用户报告文件存储（按成员/年/月）
+│   ├── member_memory.py   # 长期会话记忆（增量压缩）
+│   ├── checkup_recommend.py # 1+X+Y 体检推荐（LLM 版）
+│   ├── checkup_rules.py   # 体检推荐规则引擎（确定性版）
+│   ├── task_service.py    # 待办任务自动生成 + 管理（V1.1）
+│   ├── summary_service.py # 健康小结生成（规则+LLM）（V1.1）
+│   ├── summary_scheduler.py # 小结定期自动触发调度器（V1.1）
 │   ├── rag.py             # 报告向量化与语义检索
 │   ├── feishu.py          # 飞书多渠道 Bot 管理
 │   └── tools/             # AI 工具（function calling）
@@ -48,8 +70,10 @@ backend/app/
 │       ├── query_profile.py # 画像查询工具
 │       ├── query_abnormal.py # 异常项查询工具
 │       ├── query_reports.py  # 报告语义检索工具（RAG）
-│       └── extract_and_save.py # 对话抽取回填工具
+│       ├── extract_and_save.py # 对话抽取回填工具
+│       └── assess_scale.py  # 量表测评工具（V1.1）
 └── prompts/
+    ├── __init__.py        # 提示词常量（EXTRACT_PROMPT 等）
     └── checkup_system_v1.md  # 体检推荐系统指令
 ```
 
@@ -58,19 +82,28 @@ backend/app/
 ```
 frontend/src/
 ├── pages/
-│   ├── Dashboard.tsx        # 健康画像看板
-│   ├── Chat.tsx             # AI 咨询
-│   ├── MetricInput.tsx      # 指标管理与可视化
+│   ├── Home.tsx              # 家庭健康速览（默认首页）
+│   ├── Dashboard.tsx        # 健康画像看板（含危急值预警）
+│   ├── Chat.tsx             # AI 咨询（SSE 流式 + 图片解读）
 │   ├── Reports.tsx          # 报告管理
+│   ├── MetricInput.tsx      # 指标管理与可视化
 │   ├── CheckupRecommend.tsx # 体检推荐
 │   ├── Members.tsx          # 家庭成员管理
+│   ├── Assess.tsx           # 风险自测量表（V1.1）
+│   ├── AssessResult.tsx     # 量表结果页（V1.1）
+│   ├── Summaries.tsx        # 健康小结查看（V1.1）
 │   └── Settings.tsx         # 系统设置
 ├── components/
 │   ├── Layout.tsx           # 全局布局与导航
+│   ├── Sidebar.tsx          # 侧边栏
+│   ├── MemberSwitcher.tsx   # 成员切换器
+│   ├── ChatBubble.tsx       # 对话气泡（Markdown 渲染）
+│   ├── MetricViews.tsx      # 指标趋势图组件
 │   ├── ReportConfirmModal.tsx # 报告确认面板
 │   └── CheckupSupplementModal.tsx # 体检信息补充问卷
 ├── stores/
-│   └── memberStore.ts       # Zustand 全局成员状态
+│   ├── memberStore.ts       # Zustand 全局成员状态
+│   └── chatStore.ts         # Zustand 对话状态
 ├── lib/
 │   └── api.ts               # API 请求封装
 └── types/

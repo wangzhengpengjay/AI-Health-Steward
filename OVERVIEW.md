@@ -1,7 +1,7 @@
 # 本地 AI 健康管家 - 项目总览
 
 > 本文档是项目的导航入口，说明文件架构、每份文件的作用、当前进度和下一步。
-> 最后更新：2026-08-14（V1.2 完成，V1.3 新功能方向探索中）
+> 最后更新：2026-08-17（V1.2 完成，文档同步修复，V1.3 方向探索 20 个方向）
 
 ---
 
@@ -52,13 +52,18 @@ ai-native/
 │   ├── app/
 │   │   ├── main.py                          ← FastAPI 入口 + CORS + /health
 │   │   ├── core/
-│   │   │   ├── config.py                    ← Pydantic Settings（读 .env，含鉴权/限流/报告目录）
+│   │   │   ├── config.py                    ← Pydantic Settings（读 .env，含鉴权/限流/USERDATA_DIR）
 │   │   │   ├── database.py                  ← SQLAlchemy 异步引擎 + session
 │   │   │   ├── security.py                  ← Bearer Token 鉴权 + 滑动窗口限流（P0-3）
-│   │   │   └── reference_ranges.py          ← 成人/儿童参考范围 + 临床危急值阈值（P0-2/P1-2）
+│   │   │   ├── reference_ranges.py          ← 成人/儿童参考范围 + 临床危急值阈值（P0-2/P1-2）
+│   │   │   └── utils.py                     ← 工具函数（compute_age / metric_label / parse_model_json）
 │   │   ├── models/
 │   │   │   ├── family.py                    ← A 字段族：FamilyMember 表（含长期记忆字段）
-│   │   │   └── health.py                    ← B-H 字段族：健康画像表 + 报告/向量/消息表
+│   │   │   ├── health.py                    ← B-H 字段族：健康画像表 + 报告/向量/消息表
+│   │   │   ├── assessments.py               ← 量表测评结果表（V1.1）
+│   │   │   ├── tasks.py                     ← 健康待办任务表（V1.1）
+│   │   │   ├── summaries.py                 ← 健康小结表（V1.1）
+│   │   │   └── feishu.py                    ← 飞书渠道配置表
 │   │   ├── schemas/
 │   │   │   ├── family.py                    ← 成员 Pydantic schema
 │   │   │   └── health.py                    ← 指标 Pydantic schema（自动计算异常/危急值）
@@ -67,25 +72,46 @@ ai-native/
 │   │   │   └── routes/
 │   │   │       ├── members.py               ← 家庭成员 CRUD API（含软删除）
 │   │   │       ├── metrics.py               ← 指标录入 API（按年龄分档参考范围）
-│   │   │       ├── chat.py                  ← AI 咨询（非流式 + SSE 流式）
+│   │   │       ├── chat.py                  ← AI 咨询（非流式 + SSE 流式 + 历史分页）
 │   │   │       ├── reports.py               ← 报告上传/确认/状态机
 │   │   │       ├── feishu.py                ← 飞书渠道管理
-│   │   │       ├── checkup.py               ← 体检推荐
+│   │   │       ├── checkup.py               ← 体检推荐（1+X+Y）
 │   │   │       ├── profile.py               ← 健康画像 CRUD
-│   │   │       └── settings.py              ← 模型配置/数据导出/清除
+│   │   │       ├── scales.py                ← 风险自测量表 API（V1.1）
+│   │   │       ├── tasks.py                 ← 待办任务 API（V1.1）
+│   │   │       ├── summaries.py             ← 健康小结 API（V1.1）
+│   │   │       ├── settings.py              ← 模型配置/数据导出/清除/userdata
+│   │   │       └── providers.py             ← 模型 Provider 状态查询
 │   │   ├── services/                        ← 业务逻辑
 │   │   │   ├── consultation.py              ← AI 咨询编排（工具调用/风险分级/记忆注入）
 │   │   │   ├── member_memory.py             ← 长期会话记忆（增量压缩）
-│   │   │   ├── checkup_recommend.py         ← 1+X+Y 体检推荐
+│   │   │   ├── checkup_recommend.py         ← 1+X+Y 体检推荐（LLM 版）
+│   │   │   ├── checkup_rules.py             ← 体检推荐规则引擎（确定性版）
+│   │   │   ├── extractor.py                 ← 指标抽取（多批次 Map-Reduce + 合并）
+│   │   │   ├── extraction_rules.py          ← 抽取后处理规则（去重/标准化）
+│   │   │   ├── image_utils.py               ← 图片预处理（方向校正/压缩）
+│   │   │   ├── file_storage.py              ← 用户报告文件存储服务（按成员/年/月）
+│   │   │   ├── task_service.py              ← 待办任务自动生成 + 管理（V1.1）
+│   │   │   ├── summary_service.py           ← 健康小结生成（规则+LLM）（V1.1）
+│   │   │   ├── summary_scheduler.py         ← 小结定期自动触发调度器（V1.1）
 │   │   │   ├── feishu.py                    ← 飞书渠道接入
-│   │   │   ├── extractor.py                 ← 指标抽取（V0.3 前方案，已弃用，保留备查）
-│   │   │   └── tools/                       ← 6 个健康工具（extract_and_save/query_*）
-│   │   └── providers/                       ← 模型 provider 抽象（多模态/文字/本地）
+│   │   │   ├── rag.py                       ← 报告向量化与语义检索
+│   │   │   └── tools/                       ← 7 个健康工具（extract_and_save/query_*/assess_scale）
+│   │   ├── providers/                       ← 模型 provider 抽象（多模态/文字/本地/嵌入）
+│   │   └── prompts/                         ← AI 指令模板（checkup_system_v1 + 抽取/咨询）
 │   └── tests/
 │       ├── test_health.py                   ← 健康检查测试
 │       ├── test_reference_ranges.py         ← 参考范围/危急值单测
 │       ├── test_security.py                 ← 鉴权/限流单测
-│       └── test_consultation.py             ← 风险分级单测
+│       ├── test_consultation.py             ← 风险分级单测
+│       ├── test_chat_history.py             ← 对话历史分页测试
+│       ├── test_scales.py                   ← 量表计分测试
+│       ├── test_tasks.py                    ← 待办任务测试
+│       ├── test_summary.py                  ← 健康小结测试
+│       ├── test_summary_scheduler.py        ← 小结调度器测试
+│       ├── test_extraction_rules.py         ← 抽取规则测试
+│       ├── test_image_utils.py              ← 图片预处理测试
+│       └── test_family_schema.py            ← 成员 schema 测试
 │
 ├── frontend/                                ← React 前端
 │   ├── Dockerfile
@@ -100,11 +126,17 @@ ai-native/
 │       ├── index.css                        ← TailwindCSS + MediUI CSS 变量
 │       ├── types/index.ts                   ← TypeScript 类型（A-H 字段族）
 │       ├── lib/api.ts                       ← fetch 封装 + 各业务 api
-│       ├── stores/memberStore.ts            ← Zustand（当前成员 + 成员列表）
+│       ├── stores/
+│       │   ├── memberStore.ts               ← Zustand（当前成员 + 成员列表）
+│       │   └── chatStore.ts                 ← Zustand（对话历史 + 流式状态）
 │       ├── components/
 │       │   ├── Layout.tsx                   ← 页面布局壳层（全局拉取成员）
 │       │   ├── Sidebar.tsx                  ← 侧边栏导航
-│       │   └── MemberSwitcher.tsx           ← 成员切换器
+│       │   ├── MemberSwitcher.tsx           ← 成员切换器
+│       │   ├── ChatBubble.tsx               ← 对话气泡（Markdown 渲染）
+│       │   ├── MetricViews.tsx              ← 指标趋势图组件
+│       │   ├── ReportConfirmModal.tsx       ← 报告确认面板
+│       │   └── CheckupSupplementModal.tsx   ← 体检信息补充问卷
 │       └── pages/
 │           ├── Home.tsx                     ← 家庭健康速览（默认首页）
 │           ├── Dashboard.tsx                ← 画像看板（含危急值红色预警）
@@ -113,6 +145,9 @@ ai-native/
 │           ├── CheckupRecommend.tsx         ← 体检推荐（1+X+Y）
 │           ├── Members.tsx                  ← 成员管理（✅ 完整实现）
 │           ├── MetricInput.tsx              ← 手动录入（✅ 完整实现）
+│           ├── Assess.tsx                   ← 风险自测量表（V1.1）
+│           ├── AssessResult.tsx             ← 量表结果页（V1.1）
+│           ├── Summaries.tsx                ← 健康小结查看（V1.1）
 │           └── Settings.tsx                 ← 设置（模型配置/导出/清除）
 │
 └── openspec/                                ← 需求文档与架构设计
@@ -153,16 +188,16 @@ ai-native/
 
 | 目录 | 当前状态 | 说明 |
 |------|---------|------|
-| `backend/app/core/` | ✅ 完成 | 配置 + 数据库 + 鉴权限流 + 参考范围/危急值 |
-| `backend/app/models/` | ✅ 完成 | 健康画像表 + 报告/向量/消息表（含长期记忆字段） |
+| `backend/app/core/` | ✅ 完成 | 配置 + 数据库 + 鉴权限流 + 参考范围/危急值 + 工具函数 |
+| `backend/app/models/` | ✅ 完成 | 健康画像 + 报告/向量/消息 + 量表/待办/小结/飞书（7 个模型文件） |
 | `backend/app/schemas/` | ✅ 完成 | 成员 + 指标 + 各类 schema |
-| `backend/app/api/routes/` | ✅ 完成 | 成员/指标/咨询/报告/飞书/体检/画像/设置 |
-| `backend/app/providers/` | ✅ 完成 | 多模态/文字/本地 provider 抽象 + 路由 |
-| `backend/app/services/` | ✅ 完成 | 咨询编排/记忆/体检推荐/飞书/工具集 |
-| `backend/app/services/tools/` | ✅ 完成 | 6 个健康工具（extract_and_save/query_*） |
-| `backend/tests/` | ✅ 基础 | 健康检查 + 参考范围/安全/风险分级单测 |
-| `frontend/src/pages/` | ✅ 完成 | 家庭速览/画像/咨询/报告/体检/成员/录入/设置 |
-| `frontend/src/components/` | ✅ 完成 | Layout + Sidebar + MemberSwitcher + 报告组件 |
+| `backend/app/api/routes/` | ✅ 完成 | 成员/指标/咨询/报告/飞书/体检/画像/设置/量表/待办/小结（12 个路由） |
+| `backend/app/providers/` | ✅ 完成 | 多模态/文字/本地/嵌入 provider 抽象 + 路由 |
+| `backend/app/services/` | ✅ 完成 | 咨询/记忆/体检/抽取/飞书/待办/小结/文件存储/图片处理（14 个服务文件） |
+| `backend/app/services/tools/` | ✅ 完成 | 7 个健康工具（extract_and_save/query_*/assess_scale） |
+| `backend/tests/` | ✅ 120+ 项 | 健康检查/参考范围/安全/风险分级/对话历史/量表/待办/小结/抽取规则/图片处理/成员 schema |
+| `frontend/src/pages/` | ✅ 完成 | 首页/画像/咨询/报告/体检/成员/指标/设置/量表/量表结果/小结（11 个页面） |
+| `frontend/src/components/` | ✅ 完成 | Layout + Sidebar + MemberSwitcher + ChatBubble + MetricViews + ReportConfirmModal + CheckupSupplementModal |
 
 ---
 
@@ -286,24 +321,26 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 
 ## 七、接下来要做什么
 
-### 7.1 V1.0 开源收尾（已完成 ✅）
+### 7.1 V1.0 开源发布（已完成 ✅）
 
 1. ~~P2 剩余项~~ — ✅ 代码质量优化已全部完成（V1.2）
-2. **数据库迁移** — `alembic upgrade head` 应用最新迁移（含 i9d0e1f2a3b4 长期记忆字段）
-3. **端到端联调** — Docker 三容器运行中，核心流程已验证
-4. **发布收尾** — 生成示例数据、补充截图、确认 README_EN 同步
+2. ~~数据库迁移~~ — ✅ alembic upgrade head 已验证
+3. ~~端到端联调~~ — ✅ Docker 三容器运行中，核心流程已验证
+4. ~~发布收尾~~ — ✅ 示例数据、截图、README_EN 同步已完成
 
 ### 7.2 V1.3 新功能方向探索（进行中 🔍）
 
-已完成 13 个方向的头脑风暴与行业调研，分为三组：
+已完成 20 个方向的头脑风暴与行业调研，分为四组：
 
-**主动服务方向（①-⑥）**：JITAI 智能随访、TTM 目标教练、报告解读推送、多信号风险预警、家庭健康协调者（⭐最高差异化）、健康决策中枢
+**主动服务方向（①-⑥）**：JITIA 智能随访、TTM 目标教练、报告解读推送、多信号风险预警、家庭健康协调者（⭐最高差异化）、健康决策中枢
 
 **健康延伸方向（⑦-⑫）**：保险方案推荐、就医资源导航、数字疗法引擎、家庭照护协调、健康商城推荐、用药管理深化
 
 **专业底座方向（⑬）**：循证医学知识引擎 — 让 AI 的每句话都有出处
 
-> 详细调研与方向分析见 `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md`
+**跨界延伸方向（⑭-⑳）**：家庭数字保险箱、AI家庭记忆与传承、家庭关系图谱、环境健康感知、家庭生活首席参谋、家庭知识中枢、AI第二大脑 — 终局愿景：从健康管理→家庭AI中枢
+
+> 详细调研与方向分析见本地 `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md`（未纳入 git，仅本地参考）
 
 ### 7.3 原有建议后续方向（V1.3+）
 
@@ -320,14 +357,12 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 
 | 我想... | 看哪里 |
 |--------|--------|
-| 回顾需求全貌 | `openspec/changes/ai-health-steward/proposal.md` |
-| 理解架构决策 | `openspec/changes/ai-health-steward/design.md`（D1-D10 + TD1-TD5） |
-| 看版本规划和任务 | `openspec/changes/ai-health-steward/tasks.md` |
-| 看某个功能的详细需求 | `openspec/changes/ai-health-steward/specs/<capability>/spec.md` |
-| 看 UI 设计规范 | `openspec/changes/ai-health-steward/UI-DESIGN-SYSTEM.md` |
-| 看 PRD 评审结论 | `openspec/changes/ai-health-steward/PRD-REVIEW-R2.md` |
-| 看 V1.3 方向探索 | `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md` |
+| 了解项目全貌 | 本文档（OVERVIEW.md） |
+| 理解架构决策 | 本地 `openspec/changes/ai-health-steward/design.md`（未纳入 git） |
+| 看版本规划和任务 | 本地 `openspec/changes/ai-health-steward/tasks.md`（未纳入 git） |
+| 看 V1.3 方向探索 | 本地 `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md`（未纳入 git） |
 | 看后端代码 | `backend/app/`（main.py 入口） |
 | 看前端代码 | `frontend/src/`（App.tsx 路由入口） |
-| 校验 OpenSpec 状态 | `cd ai-native && openspec validate ai-health-steward --json` |
-| 启动开发环境 | `cp .env.example .env && docker-compose up -d` |
+| 部署项目 | [DEPLOYMENT.md](DEPLOYMENT.md) |
+| 开发指南 | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| 启动开发环境 | `cp .env.example .env && docker compose up -d` |

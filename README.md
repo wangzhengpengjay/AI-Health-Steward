@@ -32,10 +32,11 @@
 - **危急值预警** — 采用临床危急阈值（如血压≥180/110、血糖≥16.7），在画像看板以红色横幅提示尽快就医
 - **长期会话记忆** — 每次咨询后增量压缩为成员长期记忆，跨会话记住病情、用药、偏好与待跟进事项
 - **访问鉴权 + 限流** — 可选 Bearer Token 保护全部业务接口，按成员对话限流防止接口被刷
-- **成本优化** — 消除对话中重复的指标抽取 LLM 调用，单次会话仅做一次必要的模型调用
+- **成本优化** — 消除对话中重复的指标抽取 LLM 调用，单次会话仅做一次必要的模型调用；无更新的健康小结直接输出缺省页不浪费 LLM 调用
+- **生产部署支持** — 内置 `docker-compose.prod.yml` 生产配置（无热重载/无轮询/DEBUG=false），用户数据按成员/年/月目录组织存储
 - **复测/用药待办提醒** — 基于危急值、异常指标、在用药、慢病诊断与体检推荐自动生成待办任务（复查/用药/随访/预约），看板与首页一键查看
 - **健康小结/周期报告** — 按周/月/年**定期自动触发**（自然周后一天/每月1号/每年1月1日自动生成上周/上月/去年小结）+ 手动触发，指标趋势/异常事件/建议汇总，规则统计 + 可选 LLM 解读，复查项自动落成待办；无更新的周期直接输出缺省页不浪费 LLM 调用
-- **风险自测量表** — 内置 PHQ-9 抑郁、GAD-7 焦虑、糖尿病风险、心血管（ASCVD）风险四大量表，对话中或 /assess 页面自助测评，计分分档与频控
+- **风险自测量表** — 内置 9 大量表（PHQ-9 抑郁、GAD-7 焦虑、糖尿病风险、ASCVD 心血管、ISS 失眠、高血压风险、血脂异常、AD8 认知功能、卒中风险），对话中或 /assess 页面自助测评，计分分档与频控
 
 ## 产品定位与使用场景
 
@@ -129,32 +130,27 @@ docker exec health-steward-backend python -m scripts.seed_demo_data
 ai-health-steward/
 ├── backend/                 # Python FastAPI 后端
 │   ├── app/
-│   │   ├── api/             # API 路由
-│   │   ├── core/            # 配置、数据库
-│   │   ├── models/          # SQLAlchemy 数据模型
+│   │   ├── api/routes/      # API 路由（成员/指标/咨询/报告/体检/画像/设置/飞书/量表/待办/小结）
+│   │   ├── core/            # 配置、数据库、鉴权限流、参考范围、工具函数
+│   │   ├── models/          # 数据模型（家庭成员/健康画像/报告/飞书/量表/待办/小结）
 │   │   ├── schemas/         # Pydantic 数据校验
-│   │   ├── services/        # 业务逻辑（AI 咨询、飞书渠道）
+│   │   ├── services/        # 业务逻辑（AI咨询/抽取/体检推荐/飞书/记忆/待办/小结/文件存储）
+│   │   │   └── tools/       # AI 工具（function calling：查询/抽取/量表）
 │   │   ├── prompts/         # AI 指令模板
-│   │   └── providers/       # 模型 provider 抽象
-│   ├── alembic/             # 数据库迁移
-│   └── tests/               # 测试
+│   │   └── providers/       # 模型 provider 抽象（多模态/文字/本地/嵌入）
+│   ├── alembic/             # 数据库迁移（17 个版本）
+│   └── tests/               # 单元测试（120+ 项）
 ├── frontend/                # React 前端
 │   └── src/
-│       ├── components/      # UI 组件
-│       ├── pages/           # 页面
-│       ├── hooks/           # React Hooks
-│       ├── lib/             # API 请求等工具
-│       ├── stores/          # Zustand 状态管理
-│       └── types/           # TypeScript 类型
-├── openspec/                # 需求文档与架构设计
-│   └── changes/ai-health-steward/
-│       ├── proposal.md      # 需求概述
-│       ├── design.md        # 架构决策与技术选型
-│       ├── tasks.md         # 版本规划与任务
-│       ├── specs/           # 六个 capability 的详细规格
-│       └── UI-DESIGN-SYSTEM.md  # UI 设计系统规范
-├── docker-compose.yml
-├── .env.example
+│       ├── components/      # UI 组件（布局/侧边栏/成员切换/对话气泡/报告确认/指标视图）
+│       ├── pages/           # 页面（首页/画像/咨询/报告/体检/成员/指标/设置/量表/小结）
+│       ├── stores/          # Zustand 状态管理（成员/对话）
+│       ├── lib/             # API 请求封装
+│       └── types/           # TypeScript 类型定义
+├── docs/screenshots/        # 项目截图
+├── docker-compose.yml       # 开发部署（热重载）
+├── docker-compose.prod.yml  # 生产部署（无热重载/无轮询）
+├── .env.example             # 环境变量模板
 └── README.md
 ```
 
@@ -166,7 +162,9 @@ ai-health-steward/
 | V0.2 | AI 咨询能力 — 意图路由、工具调用、对话界面 | ✅ 已完成 |
 | V0.3 | 报告导入与可视化 — 多模态抽取、趋势图、画像看板、报告管理、体检推荐、RAG | ✅ 已完成 |
 | V0.4 | 飞书渠道 — 多渠道管理、资料收集、轻问答 | ✅ 已完成 |
-| V1.0 | 开源发布 — 文档完善、一键部署、体验与安全加固（年龄分档/危急值预警/家庭速览/长期记忆/鉴权限流） | 🔧 进行中 |
+| V1.0 | 开源发布 — 文档完善、一键部署、体验与安全加固（年龄分档/危急值预警/家庭速览/长期记忆/鉴权限流） | ✅ 已完成 |
+| V1.1 | 三大新功能 — 复测/用药待办提醒、健康小结/周期报告、风险自测量表（9量表） | ✅ 已完成 |
+| V1.2 | 代码质量优化 — P0/P1/P2 共 12 项（SSE 阻塞修复、事务优化、JSON 清洗、代码去重、分页等） | ✅ 已完成 |
 
 ## 项目截图
 
@@ -189,7 +187,7 @@ ai-health-steward/
 
 ## 贡献
 
-欢迎提交 Issue 和 PR。请先阅读 [贡献指南](CONTRIBUTING.md) 和 [需求文档](openspec/changes/ai-health-steward/proposal.md) 了解项目方向。
+欢迎提交 Issue 和 PR。请先阅读 [贡献指南](CONTRIBUTING.md) 了解项目方向与代码规范。
 
 ## 文档
 

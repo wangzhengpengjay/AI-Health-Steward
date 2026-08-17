@@ -12,7 +12,7 @@
 
 1. Fork 仓库并创建分支：`git checkout -b feat/your-feature`
 2. 确保代码能通过编译：后端 `python -c "from app.main import app"`，前端 `npx tsc --noEmit`
-3. 如涉及新功能，请更新对应的 spec 文档（`openspec/changes/ai-health-steward/`）
+3. 如涉及新功能，请更新对应文档（OVERVIEW.md / DEVELOPMENT.md）
 4. 提交信息使用约定式格式：
    - `feat: 新功能描述`
    - `fix: 修复描述`
@@ -48,7 +48,7 @@ cd backend && alembic upgrade head
 
 ## 项目结构
 
-详见 [README](README.md) 的项目结构章节和 [需求文档](openspec/changes/ai-health-steward/proposal.md)。
+详见 [README](README.md) 的项目结构章节和 [开发者文档](DEVELOPMENT.md)。
 
 ## License
 

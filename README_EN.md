@@ -40,7 +40,7 @@ Most health apps are black boxes: your lab results, diagnoses, and medications g
 - **Age-Tiered Reference Ranges** — normal ranges auto-matched to adult vs. child to avoid misjudging kids' metrics
 - **Personalized Checkup Recommendations** — 1+X+Y framework (core basics / condition-specific / risk screening), budget tiers, safety/contraindication checks
 - **Periodic Health Summaries** — auto weekly/monthly/yearly reports with trends, anomalies, and follow-up items
-- **Risk Self-Assessment** — built-in PHQ-9, GAD-7, diabetes, and ASCVD (cardiovascular) scales
+- **Risk Self-Assessment** — built-in 9 scales: PHQ-9 (depression), GAD-7 (anxiety), diabetes risk, ASCVD (cardiovascular), ISI (insomnia), hypertension risk, dyslipidemia, AD8 (cognitive), and stroke risk
 - **Follow-up / Medication Reminders** — auto-generated todo tasks (recheck / medication / follow-up / appointment)
 - **Report Management** — full lifecycle (upload → AI extraction → confirm → archive); three upload entry points
 - **Lab & Exam Tracking** — lab metrics grouped by report with per-test charts; exam findings on a category timeline
@@ -51,6 +51,7 @@ Most health apps are black boxes: your lab results, diagnoses, and medications g
 - **Dual-Entry Design** — WebUI is the full management backend; Feishu is the lightweight daily entry point; data flows between both automatically
 - **Pluggable Models** — multimodal API / text API / local LLM, configured on demand
 - **Cost Optimization** — eliminates duplicate metric-extraction LLM calls; skips LLM when a summary has no new data
+- **Production Deployment** — built-in `docker-compose.prod.yml` (no hot-reload/polling, DEBUG=false); user data organized by member/year/month
 - **System Settings** — manage models, health checks, data export/wipe from the UI
 
 ---
@@ -118,24 +119,27 @@ See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 AI-Health-Steward/
 ├── backend/                 # Python FastAPI backend
 │   ├── app/
-│   │   ├── api/             # API routes
-│   │   ├── core/            # Config, database
-│   │   ├── models/          # SQLAlchemy models
+│   │   ├── api/routes/      # API routes (members/metrics/chat/reports/checkup/profile/settings/feishu/scales/tasks/summaries)
+│   │   ├── core/            # Config, database, auth/rate-limit, reference ranges, utilities
+│   │   ├── models/          # SQLAlchemy models (family/health/feishu/assessments/tasks/summaries)
 │   │   ├── schemas/         # Pydantic schemas
-│   │   ├── services/        # Business logic (AI consultation, Feishu channel)
+│   │   ├── services/        # Business logic (consultation/extraction/checkup/feishu/memory/tasks/summaries/file_storage)
+│   │   │   └── tools/       # AI tools (function calling: query/extract/assess)
 │   │   ├── prompts/         # AI prompt templates
-│   │   └── providers/       # Model provider abstraction
-│   ├── alembic/             # Database migrations
-│   └── tests/               # Tests
+│   │   └── providers/       # Model provider abstraction (multimodal/text/local/embedding)
+│   ├── alembic/             # Database migrations (17 versions)
+│   └── tests/               # Unit tests (120+)
 ├── frontend/                # React frontend
 │   └── src/
-│       ├── components/      # UI components
-│       ├── pages/           # Pages
-│       ├── lib/             # API client, utilities
-│       ├── stores/          # Zustand state management
+│       ├── components/      # UI components (layout/sidebar/member-switcher/chat-bubble/report-confirm/metric-views)
+│       ├── pages/           # Pages (home/dashboard/chat/reports/checkup/members/metrics/settings/assess/summaries)
+│       ├── stores/          # Zustand state management (member/chat)
+│       ├── lib/             # API client
 │       └── types/           # TypeScript types
-├── docker-compose.yml
-├── .env.example
+├── docs/screenshots/        # Project screenshots
+├── docker-compose.yml       # Development deployment (hot-reload)
+├── docker-compose.prod.yml  # Production deployment (no hot-reload/polling)
+├── .env.example             # Environment variable template
 └── README.md
 ```
 
@@ -149,7 +153,9 @@ AI-Health-Steward/
 | V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
 | V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations, RAG | ✅ Done |
 | V0.4 | Feishu channel — multi-channel management, data collection, lightweight Q&A | ✅ Done |
-| V1.0 | Open-source release — docs, one-click deploy, hardening (age-tiered ranges / critical-value alerts / family overview / long-term memory / auth & rate limiting) | 🔧 In Progress |
+| V1.0 | Open-source release — docs, one-click deploy, hardening (age-tiered ranges / critical-value alerts / family overview / long-term memory / auth & rate limiting) | ✅ Done |
+| V1.1 | Three new features — follow-up/medication reminders, periodic health summaries, risk self-assessment (9 scales) | ✅ Done |
+| V1.2 | Code quality optimization — 12 items (SSE blocking fix, transaction optimization, JSON cleaning, dedup, pagination, etc.) | ✅ Done |
 
 ---
 

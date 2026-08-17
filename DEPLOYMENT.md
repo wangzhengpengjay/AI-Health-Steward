@@ -160,3 +160,33 @@ docker exec -i health-steward-db psql -U health health_steward < backup.sql
 ```
 
 上传的原始报告文件存储在 `upload_data` Docker volume 中。
+
+## 六、生产环境部署
+
+项目内置 `docker-compose.prod.yml`，适用于生产环境：
+
+```bash
+# 生产环境启动
+docker compose -f docker-compose.prod.yml up -d
+
+# 初始化数据库（首次部署）
+docker exec health-steward-backend alembic upgrade head
+```
+
+### 开发版 vs 生产版区别
+
+| 配置项 | 开发版 (docker-compose.yml) | 生产版 (docker-compose.prod.yml) |
+|--------|---------------------------|--------------------------------|
+| 后端热重载 | ✅ --reload --reload-dir | ❌ 无热重载 |
+| 文件轮询 | WATCHFILES_FORCE_POLLING=true | 无 |
+| APP_DEBUG | true | false |
+| 前端 | Vite 开发服务器 (5173) | Nginx 生产构建 (80) |
+
+### 用户数据存储配置
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `USERDATA_DIR` | /app/userdata | 容器内报告文件存储路径 |
+| `USERDATA_HOST_DIR` | ./userdata | 宿主机目录（Docker bind mount） |
+
+报告文件按 `成员/年/月` 目录结构组织存储，可在系统设置页查看和管理。
