@@ -15,6 +15,7 @@ from app.api.routes import feishu
 from app.api.routes import tasks
 from app.api.routes import summaries
 from app.api.routes import scales
+from app.api.routes import visit_prep
 
 # P0-3: 所有业务接口在配置了 AUTH_TOKEN 时要求 Bearer 令牌；未配置时保持开放。
 api_router = APIRouter(
@@ -33,3 +34,4 @@ api_router.include_router(feishu.router)
 api_router.include_router(tasks.router)
 api_router.include_router(summaries.router)
 api_router.include_router(scales.router)
+api_router.include_router(visit_prep.router)

@@ -142,7 +142,7 @@ export const chatApi = {
     memberId: number,
     message: string,
     file?: File,
-  ): AsyncGenerator<{ type: 'delta' | 'report' | 'error'; data: string }> {
+  ): AsyncGenerator<{ type: 'delta' | 'report' | 'error' | 'intent'; data: string }> {
     const formData = new FormData()
     formData.append('message', message)
     if (file) formData.append('file', file)
@@ -173,6 +173,8 @@ export const chatApi = {
               yield { type: 'delta', data: parsed.delta }
             } else if (parsed.report) {
               yield { type: 'report', data: parsed.report }
+            } else if (parsed.intent) {
+              yield { type: 'intent', data: parsed.intent }
             } else if (parsed.error) {
               yield { type: 'error', data: parsed.error }
             }
@@ -709,5 +711,76 @@ export const summariesApi = {
     request<HealthSummary>(`/members/${memberId}/summaries/generate`, {
       method: 'POST',
       body: JSON.stringify({ period }),
+    }),
+}
+
+// ---- Visit Preparation ----
+
+const _METRIC_LABELS: Record<string, string> = {
+  systolic_blood_pressure: '收缩压',
+  diastolic_blood_pressure: '舒张压',
+  fasting_glucose: '空腹血糖',
+  postmeal_glucose: '餐后2h血糖',
+  postmeal_1h_glucose: '餐后1h血糖',
+  random_glucose: '随机血糖',
+  bedtime_glucose: '睡前血糖',
+  heart_rate: '心率',
+  total_cholesterol: '总胆固醇',
+  triglycerides: '甘油三酯',
+  ldl_cholesterol: 'LDL-C',
+  hdl_cholesterol: 'HDL-C',
+  weight: '体重',
+  bmi: 'BMI',
+}
+
+export function metricLabel(name: string): string {
+  return _METRIC_LABELS[name] ?? name
+}
+
+export interface VisitPrepChecklistItem {
+  item: string
+  count: number
+  required: boolean
+}
+
+export interface MetricTrendRecord {
+  date: string
+  value: number
+}
+
+export interface MetricTrend {
+  metric_name: string
+  label: string
+  unit: string
+  records: MetricTrendRecord[]
+  reference_lower: number | null
+  reference_upper: number | null
+  trend: 'up' | 'down' | 'flat'
+  latest_value: number
+  is_abnormal: boolean
+}
+
+export interface VisitPrepResponse {
+  department: string
+  chief_complaint: string
+  questions: string[]
+  checklist: VisitPrepChecklistItem[]
+  summary: string
+  metrics_trend: MetricTrend[]
+}
+
+export const visitPrepApi = {
+  suggestDepartment: (memberId: number, complaint: string) =>
+    request<{ department: string | null; reason: string }>(
+      `/members/${memberId}/visit-prep/suggest-department`,
+      { method: 'POST', body: JSON.stringify({ chief_complaint: complaint }) },
+    ),
+  generate: (
+    memberId: number,
+    data: { chief_complaint: string; department: string; selected_metrics: string[] },
+  ) =>
+    request<VisitPrepResponse>(`/members/${memberId}/visit-prep`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     }),
 }

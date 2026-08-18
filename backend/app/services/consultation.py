@@ -229,7 +229,12 @@ class ConsultationService:
                 async for delta in await provider.chat(messages, tools=None, stream=True):
                     full_reply.append(delta)
                     yield ("delta", delta)
-                await self._save_message(member_id, "assistant", "".join(full_reply), source)
+                reply_text = "".join(full_reply)
+                await self._save_message(member_id, "assistant", reply_text, source)
+                # Lightweight intent detection (async, non-blocking for the reply)
+                intent_data = await self._detect_visit_intent(provider, user_message)
+                if intent_data:
+                    yield ("intent", json.dumps(intent_data, ensure_ascii=False))
                 return
 
             tool_calls_oi = [
@@ -247,7 +252,12 @@ class ConsultationService:
         async for delta in await provider.chat(messages, tools=None, stream=True):
             full_reply.append(delta)
             yield ("delta", delta)
-        await self._save_message(member_id, "assistant", "".join(full_reply), source)
+        reply_text = "".join(full_reply)
+        await self._save_message(member_id, "assistant", reply_text, source)
+        # Lightweight intent detection (async, non-blocking for the reply)
+        intent_data = await self._detect_visit_intent(provider, user_message)
+        if intent_data:
+            yield ("intent", json.dumps(intent_data, ensure_ascii=False))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -605,3 +615,46 @@ class ConsultationService:
         if any(kw in combined for kw in _A_LEVEL_KEYWORDS):
             return "A"
         return "B"
+
+    @staticmethod
+    async def _detect_visit_intent(
+        provider: ModelProvider,
+        user_message: str,
+    ) -> dict[str, Any] | None:
+        """Lightweight post-reply intent detection.
+
+        Uses a tiny model call (max_tokens=50, temp=0) to check if the user
+        expressed intent to visit a doctor. Returns None if no intent detected.
+        """
+        intent_prompt = (
+            "判断以下用户消息是否表达了就医意图（如提到去医院/看医生/挂号/就诊/"
+            "找医生/检查一下/复查/看诊等）。只输出JSON，不要其他内容：\n"
+            '{"visit_intent": true或false, "complaint": "就医原因摘要，不超过30字"}'
+        )
+        try:
+            response = await provider.chat(
+                [
+                    Message(role="system", content=intent_prompt),
+                    Message(role="user", content=user_message),
+                ],
+                temperature=0,
+                max_tokens=50,
+            )
+            text = response.content.strip()
+            # Strip markdown code block if present
+            if text.startswith("```"):
+                lines = text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                text = "\n".join(lines)
+            data = json.loads(text)
+            if data.get("visit_intent"):
+                return {
+                    "visit_intent": True,
+                    "complaint": data.get("complaint", user_message[:50]),
+                }
+        except Exception:  # noqa: BLE001
+            logger.debug("Visit intent detection failed (non-critical)")
+        return None

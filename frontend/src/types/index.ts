@@ -161,6 +161,8 @@ export interface ChatMessage {
   tool_calls?: ToolCallRecord[]
   risk_level?: RiskLevel
   isHighRiskAlert?: boolean
+  visit_intent?: boolean
+  visit_complaint?: string
 }
 
 export interface ChatResponse {

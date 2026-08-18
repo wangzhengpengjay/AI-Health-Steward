@@ -18,9 +18,10 @@ const TOOL_LABELS: Record<string, string> = {
 interface ChatBubbleProps {
   message: ChatMessage
   isStreaming?: boolean
+  onVisitPrep?: (complaint: string) => void
 }
 
-export default function ChatBubble({ message, isStreaming }: ChatBubbleProps) {
+export default function ChatBubble({ message, isStreaming, onVisitPrep }: ChatBubbleProps) {
   const isUser = message.role === 'user'
   const risk = message.risk_level ? RISK_LABELS[message.risk_level] : null
 
@@ -91,6 +92,17 @@ export default function ChatBubble({ message, isStreaming }: ChatBubbleProps) {
           <div className="mt-1.5 text-xs text-slate-400">
             本建议仅供健康参考，不替代医生诊断，请遵医嘱
           </div>
+        )}
+
+        {/* Visit preparation trigger button */}
+        {!isUser && !isStreaming && message.visit_intent && onVisitPrep && (
+          <button
+            onClick={() => onVisitPrep(message.visit_complaint || '')}
+            className="mt-2 flex items-center gap-1.5 rounded-field border border-primary bg-primary-light px-3 py-1.5 text-sm text-primary transition hover:bg-primary hover:text-white"
+          >
+            <span className="material-symbols-rounded text-base">medical_information</span>
+            生成就医指导
+          </button>
         )}
 
         {/* Timestamp */}

@@ -72,3 +72,16 @@
   margin-left: auto;
   margin-right: auto;
 }
+
+/* ── Visit Prep Print ── */
+@media print {
+  body * { visibility: hidden; }
+  #visit-prep-print-area, #visit-prep-print-area * { visibility: visible; }
+  #visit-prep-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+  }
+}

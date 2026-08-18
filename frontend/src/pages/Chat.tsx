@@ -6,6 +6,7 @@ import { chatApi, type ReportRecord } from '@/lib/api'
 import type { ChatMessage } from '@/types'
 import ChatBubble from '@/components/ChatBubble'
 import ReportConfirmModal from '@/components/ReportConfirmModal'
+import VisitPrepPanel from '@/components/VisitPrepPanel'
 
 export default function Chat() {
   const { currentMemberId, members } = useMemberStore()
@@ -32,6 +33,8 @@ export default function Chat() {
   const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [showReportModal, setShowReportModal] = useState(false)
+  const [showVisitPrep, setShowVisitPrep] = useState(false)
+  const [visitPrepComplaint, setVisitPrepComplaint] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -166,6 +169,7 @@ export default function Chat() {
 
     try {
       let fullContent = ''
+      let visitIntent: { visit_intent: boolean; complaint: string } | null = null
       for await (const chunk of chatApi.stream(id, userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
         if (chunk.type === 'delta') {
           fullContent += chunk.data
@@ -180,6 +184,12 @@ export default function Chat() {
           } catch (e) {
             console.error('Failed to parse report event:', e)
           }
+        } else if (chunk.type === 'intent') {
+          try {
+            visitIntent = JSON.parse(chunk.data)
+          } catch {
+            // ignore parse errors for intent
+          }
         } else if (chunk.type === 'error') {
           throw new Error(chunk.data)
         }
@@ -189,6 +199,8 @@ export default function Chat() {
         role: 'assistant',
         content: fullContent || '(空回复)',
         timestamp: new Date().toISOString(),
+        visit_intent: visitIntent?.visit_intent ?? false,
+        visit_complaint: visitIntent?.complaint,
       }
       appendMessage(id, aiMsg)
     } catch (err) {
@@ -267,7 +279,11 @@ export default function Chat() {
         )}
 
         {messages.map((msg, i) => (
-          <ChatBubble key={i} message={msg} />
+          <ChatBubble
+            key={i}
+            message={msg}
+            onVisitPrep={(complaint) => { setVisitPrepComplaint(complaint); setShowVisitPrep(true) }}
+          />
         ))}
 
         {isStreaming && (
@@ -356,6 +372,14 @@ export default function Chat() {
           >
             <span className="material-symbols-rounded">attach_file</span>
           </button>
+          <button
+            onClick={() => { setVisitPrepComplaint(''); setShowVisitPrep(true) }}
+            disabled={isStreaming || !memberId}
+            className="flex h-11 w-11 items-center justify-center rounded-field border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            title="就医指导"
+          >
+            <span className="material-symbols-rounded">medical_information</span>
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -383,6 +407,15 @@ export default function Chat() {
           report={pendingReport}
           uploadSource="chat"
           onClose={() => { setShowReportModal(false); if (memberId != null) setPendingReport(memberId, null) }}
+        />
+      )}
+
+      {/* Visit preparation panel */}
+      {showVisitPrep && memberId && (
+        <VisitPrepPanel
+          memberId={memberId}
+          initialComplaint={visitPrepComplaint}
+          onClose={() => setShowVisitPrep(false)}
         />
       )}
     </div>
