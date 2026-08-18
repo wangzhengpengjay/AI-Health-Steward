@@ -1,6 +1,27 @@
 # 部署指南
 
-## 一、Docker Compose 一键部署（推荐）
+## 一、两种部署模式
+
+项目提供两套 Docker Compose 配置，适用于不同场景：
+
+| | 开发版 `docker-compose.yml` | 生产版 `docker-compose.prod.yml` |
+|---|---|---|
+| **适用人群** | 开发者（改代码调试） | 家庭用户（自部署使用） |
+| **后端** | `uvicorn --reload` 热重载 + 文件轮询 | 无热重载，用镜像内代码 |
+| **前端** | Vite 开发服务器（HMR 热更新） | Vite preview（生产构建产物） |
+| **源码挂载** | 挂载宿主机源码到容器 | 不挂载，用镜像内打包代码 |
+| **APP_DEBUG** | true（SQL回显/详细日志） | false |
+| **空闲 CPU** | ~5-15%（持续轮询） | ≈0% |
+| **适合场景** | 本地开发调试 | NAS/小主机 7×24 小时运行 |
+
+> 💡 **怎么选？**
+> - **改代码** → 用开发版：`docker compose up -d`
+> - **只是用** → 用生产版：`docker compose -f docker-compose.prod.yml up -d`
+> - 两种模式共享数据库和用户数据，可随时切换，数据不丢失
+
+---
+
+## 二、Docker Compose 部署
 
 ### 前置要求
 
@@ -8,7 +29,7 @@
 - 模型 API Key（OpenAI 兼容接口）
 - 最低配置：2 核 CPU / 2GB 内存 / 10GB 磁盘
 
-### 步骤
+### 家庭用户部署（生产版，推荐自部署用户使用）
 
 ```bash
 # 1. 克隆仓库
@@ -21,21 +42,66 @@ cp .env.example .env
 # 3. 编辑 .env，至少配置以下项：
 #    MULTIMODAL_API_BASE / MULTIMODAL_API_KEY / MULTIMODAL_API_MODEL  （必选）
 #    TEXT_API_BASE / TEXT_API_KEY / TEXT_API_MODEL                    （推荐）
-#    POSTGRES_PASSWORD                                                 （生产环境务必修改）
+#    POSTGRES_PASSWORD                                                 （务必修改）
 #    EMBEDDING_MODEL                                                   （可选，用于 RAG 报告检索）
 
 # 4. 同步配置到 backend/.env（Docker 挂载使用此文件）
 cp .env backend/.env
 
-# 5. 一键启动
-docker compose up -d
+# 5. 构建镜像（首次部署）
+docker compose -f docker-compose.prod.yml build
 
-# 6. 初始化数据库（首次部署）
+# 6. 启动（无热重载，低 CPU）
+docker compose -f docker-compose.prod.yml up -d
+
+# 7. 初始化数据库（首次部署）
 docker exec health-steward-backend alembic upgrade head
 
-# 7. 访问
+# 8. 访问
 # WebUI:  http://localhost:5173
 # API 文档: http://localhost:8000/docs
+```
+
+> 生产版后端不挂载源码，使用镜像内打包的代码；前端使用 `vite preview` 提供生产构建产物。空闲时 CPU 占用接近 0%，适合长期运行。
+
+### 开发者部署（开发版，改代码即时生效）
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/wangzhengpengjay/AI-Health-Steward.git
+cd AI-Health-Steward
+
+# 2. 复制环境配置并填写
+cp .env.example .env
+# 编辑 .env，至少配置 MULTIMODAL_API_KEY 和 TEXT_API_KEY
+
+cp .env backend/.env
+
+# 3. 一键启动（热重载）
+docker compose up -d
+
+# 4. 初始化数据库（首次部署）
+docker exec health-steward-backend alembic upgrade head
+
+# 5. 访问
+# WebUI: http://localhost:5173
+# API 文档: http://localhost:8000/docs
+```
+
+> 开发版挂载宿主机源码到容器，改后端 Python 代码自动重载，改前端 TSX 代码 HMR 即时更新。
+
+### 两种模式切换
+
+数据库（`pgdata` volume）和用户数据（`./userdata`）两种模式共享，可随时切换：
+
+```bash
+# 开发 → 生产
+docker compose down
+docker compose -f docker-compose.prod.yml up -d
+
+# 生产 → 开发
+docker compose -f docker-compose.prod.yml down
+docker compose up -d
 ```
 
 ### 常用命令
@@ -48,7 +114,7 @@ docker compose logs -f frontend
 # 重启服务
 docker compose restart backend
 
-# 重建后端（代码变更后）
+# 重建后端（代码变更后，开发版）
 docker compose up -d --force-recreate backend
 
 # 停止所有服务
@@ -58,7 +124,7 @@ docker compose down
 docker compose down -v
 ```
 
-## 二、配置说明
+## 三、配置说明
 
 ### 模型配置
 
@@ -96,7 +162,7 @@ docker compose down -v
 | `APP_DEBUG` | true | 生产环境建议设为 false |
 | `CORS_ORIGINS` | http://localhost:5173 | 多个用逗号分隔 |
 
-## 三、飞书 Bot 配置
+## 四、飞书 Bot 配置
 
 ### 创建飞书应用
 
@@ -126,7 +192,7 @@ docker compose down -v
 
 支持配置多个飞书渠道，每个渠道绑定不同的家庭成员。
 
-## 四、本地开发部署
+## 五、本地开发部署（不用 Docker）
 
 ```bash
 # 1. 启动数据库
@@ -149,7 +215,7 @@ npm run dev
 # 4. 访问 http://localhost:5173
 ```
 
-## 五、数据备份与恢复
+## 六、数据备份与恢复
 
 ```bash
 # 备份
@@ -159,30 +225,9 @@ docker exec health-steward-db pg_dump -U health health_steward > backup.sql
 docker exec -i health-steward-db psql -U health health_steward < backup.sql
 ```
 
-上传的原始报告文件存储在 `upload_data` Docker volume 中。
+上传的原始报告文件存储在 `userdata` 目录中（按 成员/年/月 组织）。
 
-## 六、生产环境部署
-
-项目内置 `docker-compose.prod.yml`，适用于生产环境：
-
-```bash
-# 生产环境启动
-docker compose -f docker-compose.prod.yml up -d
-
-# 初始化数据库（首次部署）
-docker exec health-steward-backend alembic upgrade head
-```
-
-### 开发版 vs 生产版区别
-
-| 配置项 | 开发版 (docker-compose.yml) | 生产版 (docker-compose.prod.yml) |
-|--------|---------------------------|--------------------------------|
-| 后端热重载 | ✅ --reload --reload-dir | ❌ 无热重载 |
-| 文件轮询 | WATCHFILES_FORCE_POLLING=true | 无 |
-| APP_DEBUG | true | false |
-| 前端 | Vite 开发服务器 (5173) | Nginx 生产构建 (80) |
-
-### 用户数据存储配置
+## 七、用户数据存储配置
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|

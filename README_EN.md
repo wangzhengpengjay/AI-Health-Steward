@@ -64,7 +64,9 @@ Most health apps are black boxes: your lab results, diagnoses, and medications g
 - Model API Key (OpenAI-compatible endpoint, e.g., GPT-4o / DeepSeek)
 - Minimum: 2 CPU cores / 2GB RAM / 10GB disk
 
-### Deployment
+### For Home Users (Production, recommended for self-hosting)
+
+Production mode: no hot-reload, idle CPU ≈ 0%, ideal for NAS / mini PC 24/7:
 
 ```bash
 # 1. Clone the repository
@@ -78,7 +80,26 @@ cp .env.example .env
 # 3. Sync config to backend/.env
 cp .env backend/.env
 
-# 4. One-command startup
+# 4. Build and start (production mode)
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+
+# 5. Initialize database (first deploy)
+docker exec health-steward-backend alembic upgrade head
+
+# 6. Access
+# WebUI: http://localhost:5173
+# API Docs: http://localhost:8000/docs
+```
+
+### For Developers (Development, hot-reload)
+
+Development mode: hot-reload + HMR, backend Python auto-reloads, frontend TSX instant update:
+
+```bash
+# 1-3. Same as above (clone, configure .env, cp to backend/.env)
+
+# 4. One-command startup (development mode)
 docker compose up -d
 
 # 5. Initialize database (first deploy)
@@ -88,6 +109,8 @@ docker exec health-steward-backend alembic upgrade head
 # WebUI: http://localhost:5173
 # API Docs: http://localhost:8000/docs
 ```
+
+> Both modes share the same database and user data. See [Deployment Guide](DEPLOYMENT.md) for details.
 
 ### Quick Trial
 

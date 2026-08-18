@@ -79,7 +79,9 @@
 - 模型 API Key（OpenAI 兼容接口，支持 GPT-4o / DeepSeek 等）
 - 最低配置：2 核 CPU / 2GB 内存 / 10GB 磁盘
 
-### 部署
+### 家庭用户部署（生产版，推荐自部署用户）
+
+生产版无热重载、空闲 CPU≈0%，适合 NAS / 小主机 7×24 小时运行：
 
 ```bash
 # 1. 克隆仓库
@@ -93,7 +95,26 @@ cp .env.example .env
 # 3. 同步配置到 backend/.env
 cp .env backend/.env
 
-# 4. 一键启动
+# 4. 构建并启动（生产模式）
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+
+# 5. 初始化数据库（首次部署）
+docker exec health-steward-backend alembic upgrade head
+
+# 6. 访问
+# WebUI: http://localhost:5173
+# API 文档: http://localhost:8000/docs
+```
+
+### 开发者部署（开发版，改代码即时生效）
+
+开发版热重载 + HMR，改后端 Python 自动重载，改前端 TSX 即时更新：
+
+```bash
+# 1-3. 同上（克隆、配置 .env、cp 到 backend/.env）
+
+# 4. 一键启动（开发模式）
 docker compose up -d
 
 # 5. 初始化数据库（首次部署）
@@ -103,6 +124,8 @@ docker exec health-steward-backend alembic upgrade head
 # WebUI: http://localhost:5173
 # API 文档: http://localhost:8000/docs
 ```
+
+> 两种模式共享数据库和用户数据，可随时切换。详见[部署指南](DEPLOYMENT.md)。
 
 ### 快速体验
 
