@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils import metric_label as _metric_label
@@ -39,17 +39,37 @@ async def _add_task(
     source_ref: str | None = None,
     auto_generated: bool = True,
 ) -> HealthTask | None:
-    """Insert a task, de-duplicating against an existing open task with same source_ref."""
-    if source_ref:
-        existing = await db.execute(
+    """Insert a task, de-duplicating against an equivalent open task.
+
+    Dedup uses the stable natural key (member, task_type, title, status=open)
+    rather than ``source_ref`` alone. ``source_ref`` embeds a per-row id for
+    metrics (``metric:{id}``) and checkups (``checkup:{id}``), so it is unique
+    by construction and the old dedup never fired: three critical systolic
+    readings produced three identical "尽快复查收缩压" to-dos, and each checkup
+    recommendation added another identical appointment task.
+
+    When an equivalent open task exists it is refreshed (most urgent priority,
+    earliest due date) instead of duplicated.
+    """
+    existing = (
+        await db.execute(
             select(HealthTask).where(
                 HealthTask.member_id == member_id,
-                HealthTask.source_ref == source_ref,
+                HealthTask.task_type == task_type,
+                HealthTask.title == title,
                 HealthTask.status == "open",
             )
         )
-        if existing.scalars().first() is not None:
-            return None
+    ).scalars().first()
+    if existing is not None:
+        if priority == "critical":
+            existing.priority = "critical"
+        if due_date is not None and (
+            existing.due_date is None or due_date < existing.due_date
+        ):
+            existing.due_date = due_date
+        await db.flush()
+        return None
     task = HealthTask(
         member_id=member_id,
         task_type=task_type,
@@ -64,6 +84,7 @@ async def _add_task(
     db.add(task)
     await db.flush()
     return task
+
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +198,11 @@ async def list_tasks(
         .where(HealthTask.member_id == member_id)
         .order_by(
             HealthTask.status.asc(),
-            HealthTask.priority.desc(),
+            # `priority` is a text column, so a plain .desc() sorted
+            # alphabetically ("normal" > "low" > "high" > "critical") and pushed
+            # the most urgent items to the bottom of the list. Map to an
+            # explicit severity weight instead.
+            _priority_weight().asc(),
             HealthTask.due_date.asc().nulls_last(),
         )
     )
@@ -191,6 +216,19 @@ async def list_tasks(
         stmt = stmt.where(HealthTask.task_type == task_type)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+# Severity weight: lower sorts first. Keep in sync with the frontend's
+# TaskPriority union ('critical' | 'high' | 'normal' | 'low').
+_PRIORITY_WEIGHTS = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+
+
+def _priority_weight():
+    return case(
+        *[(HealthTask.priority == name, weight) for name, weight in _PRIORITY_WEIGHTS.items()],
+        else_=len(_PRIORITY_WEIGHTS),
+    )
+
 
 
 async def overview(

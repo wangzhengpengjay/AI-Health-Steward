@@ -48,6 +48,10 @@ services:
     container_name: health-steward-frontend
     ports:
       - "5173:5173"
+    environment:
+      # Inside the compose network the backend is reachable by service name.
+      # vite.config.ts defaults to 127.0.0.1:8000 for host-side `npm run dev`.
+      VITE_PROXY_TARGET: "http://backend:8000"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/vite.config.ts:/app/vite.config.ts

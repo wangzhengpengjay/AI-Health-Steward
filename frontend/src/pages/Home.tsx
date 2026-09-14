@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { membersApi, metricsApi, profileApi, tasksApi } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
-import type { FamilyMember } from '@/types'
+import type { FamilyMember, MetricRecord } from '@/types'
 
 function relationshipLabel(rel?: string): string {
   const map: Record<string, string> = {
@@ -56,8 +56,23 @@ function MemberCard({ member }: { member: FamilyMember }) {
   const taskCount = tasks.length
   void criticalTasks
 
-  const critical = metrics.filter((r) => r.is_critical)
-  const abnormal = metrics.filter((r) => r.is_abnormal && !r.is_critical)
+  // Alert counts are scoped to the latest reading per metric within a recent
+  // window. Counting every historical record kept the card permanently red long
+  // after a critical value had been resolved — the fastest way to teach a user
+  // to ignore the alert. Dashboard already used the latest-per-metric view.
+  const ALERT_WINDOW_DAYS = 14
+  const alertCutoff = Date.now() - ALERT_WINDOW_DAYS * 86400000
+  const latestByMetric = new Map<string, MetricRecord>()
+  for (const r of metrics) {
+    if (new Date(r.measured_at).getTime() < alertCutoff) continue
+    const prev = latestByMetric.get(r.metric_name)
+    if (!prev || new Date(r.measured_at) > new Date(prev.measured_at)) {
+      latestByMetric.set(r.metric_name, r)
+    }
+  }
+  const recentLatest = [...latestByMetric.values()]
+  const critical = recentLatest.filter((r) => r.is_critical)
+  const abnormal = recentLatest.filter((r) => r.is_abnormal && !r.is_critical)
   const hasProfileData =
     !!profile &&
     (profile.diagnoses.length > 0 ||

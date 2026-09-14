@@ -71,27 +71,76 @@ def test_assess_scale_tool_questions_mode():
 
 
 def test_assess_scale_tool_result():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
+
     import asyncio
 
     tool = AssessScaleTool()
     db = AsyncMock()
-
-    async def _execute(stmt):
-        res = MagicMock()
-        res.scalars.return_value.first.return_value = None
-        return res
-
-    db.execute.side_effect = _execute
     db.flush = AsyncMock()
 
-    result = asyncio.run(tool.execute(db, 6, scale_code="phq9",
-                          answers={"phq1": 3, "phq2": 3, "phq3": 3, "phq4": 3,
-                                   "phq5": 3, "phq6": 3, "phq7": 3, "phq8": 3, "phq9": 3}))
+    full = {f"phq{i}": 3 for i in range(1, 10)}
+    result = asyncio.run(tool.execute(db, 6, scale_code="phq9", answers=full))
     assert result["ok"] is True
     assert result["mode"] == "result"
-    assert result["risk_level"] == "severe"
+    assert result["total_score"] == 27
+    # PHQ-9 item 9 (self-harm) is positive, so the item-level safety rule must
+    # escalate above the plain total-score tier instead of reporting "severe".
+    assert result["risk_level"] == "critical"
+    assert result["red_flags"] == ["⚠ 自伤风险提示"]
+    assert "伤害自己" in result["advice"]
+    assert "热线" in result["advice"]
+    # Every submission is persisted (previously only the first ever was).
     assert db.add.called
+
+
+def test_assess_scale_tool_persists_every_submission():
+    """Repeated conversational assessments must all be stored."""
+    from unittest.mock import AsyncMock
+
+    import asyncio
+
+    tool = AssessScaleTool()
+    db = AsyncMock()
+    db.flush = AsyncMock()
+
+    full = {f"phq{i}": 0 for i in range(1, 10)}
+    for _ in range(3):
+        result = asyncio.run(tool.execute(db, 6, scale_code="phq9", answers=full))
+        assert result["ok"] is True
+    assert db.add.call_count == 3
+
+
+def test_assess_scale_tool_rejects_incomplete_answers():
+    from unittest.mock import AsyncMock
+
+    import asyncio
+
+    tool = AssessScaleTool()
+    db = AsyncMock()
+    db.flush = AsyncMock()
+
+    result = asyncio.run(tool.execute(db, 6, scale_code="phq9", answers={"phq1": 3}))
+    assert result["ok"] is False
+    assert "未作答" in result["message"]
+    assert not db.add.called
+
+
+def test_assess_scale_tool_rejects_out_of_range_answers():
+    from unittest.mock import AsyncMock
+
+    import asyncio
+
+    tool = AssessScaleTool()
+    db = AsyncMock()
+    db.flush = AsyncMock()
+
+    full = {f"phq{i}": 0 for i in range(1, 10)}
+    full["phq2"] = 99
+    result = asyncio.run(tool.execute(db, 6, scale_code="phq9", answers=full))
+    assert result["ok"] is False
+    assert "不在允许范围" in result["message"]
+    assert not db.add.called
 
 
 def test_should_push_frequency_control():

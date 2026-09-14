@@ -17,6 +17,10 @@ from app.providers.embedding import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
+# Must match the pgvector column width declared in models.health.ReportChunk
+# (Vector(1024)). A mismatch used to surface as a DataError at flush time.
+EMBEDDING_DIM = 1024
+
 
 def _build_chunk_text(member_id: int, report: ReportRecord, extraction: dict) -> str:
     """Build a text representation of a report for embedding."""
@@ -111,6 +115,21 @@ async def generate_and_store_embedding(
         logger.error("Embedding generation failed for report %s: %s", report.id, e)
         return None
 
+    # Validate the dimension before touching the DB. report_chunks.embedding is
+    # vector(1024); storing a differently-sized vector raises DataError at flush
+    # time, which (without a savepoint) poisons the caller's transaction and can
+    # roll back an otherwise successful report archival.
+    actual_dim = len(embedding) if embedding is not None else 0
+    if actual_dim != EMBEDDING_DIM:
+        logger.error(
+            "Embedding dimension mismatch for report %s: model returned %d, "
+            "column expects %d. Skipping embedding storage (semantic search "
+            "disabled for this report). Configure EMBEDDING_MODEL to a "
+            "%d-dimension model.",
+            report.id, actual_dim, EMBEDDING_DIM, EMBEDDING_DIM,
+        )
+        return None
+
     # Delete existing chunk for this report (in case of re-archival)
     await db.execute(
         delete(ReportChunk).where(ReportChunk.report_id == report.id)
@@ -138,6 +157,15 @@ async def search_reports(
 
     Returns list of {chunk_text, report_id, distance} sorted by relevance.
     """
+    # `limit` can originate from an LLM tool argument. Bounds-check it: a
+    # negative value reached PostgreSQL as `LIMIT -1` and raised
+    # InvalidRowCountInLimitClauseError, and a huge value returned the whole table.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(limit, 20))
+
     provider = EmbeddingProvider()
     if not provider.is_configured:
         return []

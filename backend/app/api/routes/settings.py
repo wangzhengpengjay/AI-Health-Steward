@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -14,10 +15,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db
-from app.models.assessments import ScaleResult
-from app.models.family import FamilyMember
-from app.models.health import (
+from app.core.database import Base, get_db
+from app.models.assessments import ScaleResult  # noqa: F401  (registers metadata)
+from app.models.family import FamilyMember  # noqa: F401
+from app.models.health import (  # noqa: F401
     Allergy,
     ChatMessage,
     CheckupReport,
@@ -28,27 +29,27 @@ from app.models.health import (
     MetricRecord,
     ReportRecord,
 )
-from app.models.summaries import HealthSummary
-from app.models.tasks import HealthTask
+from app.models.summaries import HealthSummary  # noqa: F401
+from app.models.tasks import HealthTask  # noqa: F401
 from app.providers.router import ModelRouter, get_model_router
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-_EXPORT_MODELS = {
-    "family_members": FamilyMember,
-    "metric_records": MetricRecord,
-    "diagnoses": Diagnosis,
-    "medications": Medication,
-    "allergies": Allergy,
-    "lifestyles": Lifestyle,
-    "family_history": FamilyHistory,
-    "report_records": ReportRecord,
-    "checkup_reports": CheckupReport,
-    "scale_results": ScaleResult,
-    "chat_messages": ChatMessage,
-    "health_summaries": HealthSummary,
-    "health_tasks": HealthTask,
-}
+logger = logging.getLogger(__name__)
+
+# Tables that hold family health data. Derived from the ORM metadata instead of
+# a hand-maintained list: the previous hardcoded list silently omitted
+# surgeries, vaccinations, report_chunks and data_provenances, so "导出全部数据"
+# lost records and "清除所有健康数据" left them in the database.
+# Config-only tables are excluded on purpose — channel credentials are not
+# health data and should survive an export/wipe cycle.
+_CONFIG_ONLY_TABLES = {"alembic_version", "feishu_channels"}
+
+
+def _health_tables() -> list[Any]:
+    """Health-data tables in dependency order (parents before children)."""
+    return [t for t in Base.metadata.sorted_tables if t.name not in _CONFIG_ONLY_TABLES]
+
 
 
 def _mask(s: str) -> str:
@@ -231,18 +232,17 @@ async def providers_health(
 @router.get("/export")
 async def export_all_data(db: AsyncSession = Depends(get_db)) -> StreamingResponse:
     """Export all family health data as a single JSON file."""
+    tables = _health_tables()
     payload: dict[str, Any] = {
         "_meta": {
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "app_version": "0.1.0",
+            "tables": [t.name for t in tables],
         }
     }
-    for name, model in _EXPORT_MODELS.items():
-        rows = (await db.execute(select(model))).scalars().all()
-        payload[name] = [
-            {c.name: getattr(r, c.name, None) for c in r.__table__.columns}
-            for r in rows
-        ]
+    for table in tables:
+        rows = (await db.execute(select(table))).mappings().all()
+        payload[table.name] = [dict(row) for row in rows]
 
     content = json.dumps(payload, ensure_ascii=False, default=str, indent=2)
     filename = f"health-data-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
@@ -255,21 +255,69 @@ async def export_all_data(db: AsyncSession = Depends(get_db)) -> StreamingRespon
 
 # ---- Data wipe ----
 
+def _purge_user_files() -> int:
+    """Delete stored report files so a wipe removes health data, not just rows.
+
+    Refuses to touch a filesystem root or the user's home directory: a
+    misconfigured USERDATA_DIR must never turn "clear health data" into a
+    destructive wipe of unrelated files.
+    """
+    import shutil
+    from pathlib import Path
+
+    settings_obj = get_settings()
+    unsafe = {Path("/").resolve(), Path.home().resolve()}
+    removed = 0
+    roots = {
+        Path(settings_obj.USERDATA_DIR).expanduser(),
+        Path(settings_obj.UPLOAD_DIR).expanduser(),
+    }
+    for root in roots:
+        if not root.is_dir():
+            continue
+        if root.resolve() in unsafe:
+            logger.error("Refusing to purge unsafe directory: %s", root)
+            continue
+        for child in root.iterdir():
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+                removed += 1
+            except OSError as exc:
+                logger.warning("Failed to remove %s during wipe: %s", child, exc)
+    return removed
+
+
 @router.delete("/data", status_code=status.HTTP_200_OK)
 async def wipe_all_data(
-    confirm: str = "DELETE",
+    # No default: the guard must not be satisfiable by omitting the parameter.
+    # With `confirm: str = "DELETE"` a bare DELETE /settings/data wiped the
+    # entire database, making the "requires explicit confirmation" contract
+    # meaningless.
+    confirm: str = "",
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Delete ALL health data. Requires confirm=DELETE query param."""
+    """Delete ALL health data (rows + stored files). Requires confirm=DELETE."""
     if confirm != "DELETE":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pass ?confirm=DELETE to confirm data wipe.",
+            detail="需要显式确认：请携带 ?confirm=DELETE",
         )
-    for model in reversed(list(_EXPORT_MODELS.values())):
-        await db.execute(delete(model))
+    deleted: dict[str, int] = {}
+    # Reverse dependency order so foreign keys stay satisfied.
+    for table in reversed(_health_tables()):
+        result = await db.execute(delete(table))
+        deleted[table.name] = result.rowcount or 0
     await db.commit()
-    return {"deleted": True, "message": "所有健康数据已清除"}
+    files_removed = _purge_user_files()
+    return {
+        "deleted": True,
+        "tables": deleted,
+        "files_removed": files_removed,
+        "message": "所有健康数据已清除",
+    }
 
 
 # ---- User data directory ----
@@ -278,8 +326,8 @@ async def wipe_all_data(
 async def get_userdata_config() -> dict[str, Any]:
     """Return current userdata directory path."""
     return {
-        "userdata_dir": settings.USERDATA_DIR,
-        "exists": os.path.isdir(settings.USERDATA_DIR),
+        "userdata_dir": get_settings().USERDATA_DIR,
+        "exists": os.path.isdir(get_settings().USERDATA_DIR),
     }
 
 
@@ -293,7 +341,7 @@ async def update_userdata_path(payload: UserDataPathUpdate) -> dict[str, Any]:
     import shutil
     from pathlib import Path
 
-    old_path = Path(settings.USERDATA_DIR)
+    old_path = Path(get_settings().USERDATA_DIR)
     new_path = Path(payload.new_path).expanduser().resolve()
 
     if new_path == old_path:

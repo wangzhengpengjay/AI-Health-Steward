@@ -31,19 +31,46 @@ async def create_metric(
     data = payload.model_dump()
     data["source_type"] = "manual"
 
+    # Normalize aliases and reject unknown metric names. Previously any string
+    # was accepted, so a typo (e.g. "systolic_bp") was stored as a row that has
+    # no reference range, is never flagged abnormal, and never appears in any
+    # trend chart — silently unmonitored health data.
+    #
+    # The accepted set is the UI's fixed tabs PLUS every metric the backend can
+    # actually evaluate (blood lipids have reference ranges but no input tab).
+    from app.core.reference_ranges import known_metric_names
+    from app.services.extraction_rules import ALLOWED_METRIC_NAMES, METRIC_NAME_ALIASES
+
+    accepted = set(ALLOWED_METRIC_NAMES) | known_metric_names()
     metric_name = data.get("metric_name", "")
+    metric_name = METRIC_NAME_ALIASES.get(metric_name, metric_name)
+    if metric_name not in accepted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"不支持的指标名称：{metric_name}。"
+                f"可选：{', '.join(sorted(accepted))}"
+            ),
+        )
+    data["metric_name"] = metric_name
     value = data.get("value")
     age = _age(member.birth_date)
 
-    # P0-2/P1-2: 未显式提供参考范围时按年龄填充，并用临床危急值阈值计算异常/危急
-    if data.get("reference_lower") is None and data.get("reference_upper") is None:
-        from app.core.reference_ranges import is_critical_value, resolve_reference_range
-        lo, hi = resolve_reference_range(metric_name, age)
-        data["reference_lower"] = lo
-        data["reference_upper"] = hi
-        if lo is not None and hi is not None and value is not None:
-            data["is_abnormal"] = not (lo <= value <= hi)
-            data["is_critical"] = is_critical_value(metric_name, float(value), age)
+    # 服务端统一计算参考范围与异常/危急标记：不信任客户端传入的
+    # is_abnormal / is_critical，并且单侧参考范围也能正确判定（P0）。
+    from app.core.reference_ranges import evaluate_metric
+
+    lo, hi, abnormal, critical = evaluate_metric(
+        metric_name,
+        float(value),
+        age,
+        explicit_lower=data.get("reference_lower"),
+        explicit_upper=data.get("reference_upper"),
+    )
+    data["reference_lower"] = lo
+    data["reference_upper"] = hi
+    data["is_abnormal"] = abnormal
+    data["is_critical"] = critical
 
     metric = MetricRecord(member_id=member_id, **data)
     db.add(metric)
@@ -118,21 +145,34 @@ async def update_metric(
             detail=f"MetricRecord {metric_id} not found",
         )
     data = payload.model_dump(exclude_unset=True)
-    # Re-compute abnormal/critical if value or references changed.
-    # Use the same clinical critical thresholds as create_metric (P1-2), NOT the
-    # old relative heuristic, so create/update stay consistent.
-    new_value = data.get("value", metric.value)
+    # Recompute abnormal/critical from the *effective* value and bounds, using
+    # the same server-side rules as create_metric so the two paths can never
+    # disagree. Guard against an explicit null value (optional in the schema)
+    # which previously reached the comparison and raised TypeError -> 500.
+    new_value = data.get("value")
+    if new_value is None:
+        new_value = metric.value
+        data.pop("value", None)
     new_lower = data.get("reference_lower", metric.reference_lower)
     new_upper = data.get("reference_upper", metric.reference_upper)
-    if new_lower is not None and new_upper is not None:
-        data["is_abnormal"] = not (new_lower <= new_value <= new_upper)
-        data["is_critical"] = False
-        if data["is_abnormal"]:
-            from app.core.reference_ranges import is_critical_value
-            from app.core.utils import compute_age as _age
-            member = await db.get(FamilyMember, metric.member_id)
-            age = _age(member.birth_date) if member else None
-            data["is_critical"] = is_critical_value(metric.metric_name, float(new_value), age)
+    if new_value is not None:
+        from app.core.reference_ranges import evaluate_metric, plausible_range_error
+
+        # The payload has no metric_name, so validate against the stored one.
+        error = plausible_range_error(metric.metric_name, float(new_value))
+        if error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
+            )
+        member = await db.get(FamilyMember, metric.member_id)
+        age = _age(member.birth_date) if member else None
+        lo, hi, abnormal, critical = evaluate_metric(
+            metric.metric_name, float(new_value), age, new_lower, new_upper
+        )
+        data["reference_lower"] = lo
+        data["reference_upper"] = hi
+        data["is_abnormal"] = abnormal
+        data["is_critical"] = critical
     for key, val in data.items():
         setattr(metric, key, val)
     await db.flush()

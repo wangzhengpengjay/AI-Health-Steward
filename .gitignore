@@ -54,3 +54,6 @@ openspec/
 OVERVIEW.md
 docs/
 userdata/
+
+# Uploaded health reports (user data) — runtime storage, never commit
+backend/uploads/

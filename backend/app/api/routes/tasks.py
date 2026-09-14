@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -24,10 +24,12 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
-    status: Optional[str] = None  # done / dismissed / reopen
-    title: Optional[str] = None
+    """Partial update. Use ``model_dump(exclude_unset=True)`` so an explicit
+    ``null`` (clear the field) is distinguishable from "not provided"."""
+    status: Optional[Literal["done", "dismissed", "reopen"]] = None
+    title: Optional[str] = Field(None, max_length=128)
     description: Optional[str] = None
-    priority: Optional[str] = None
+    priority: Optional[Literal["critical", "high", "normal", "low"]] = None
     due_date: Optional[date] = None
 
 
@@ -116,22 +118,29 @@ async def update_task(
     if task is None:
         raise HTTPException(status_code=404, detail="待办不存在")
 
-    if payload.status == "done":
+    data = payload.model_dump(exclude_unset=True)
+    new_status = data.pop("status", None)
+
+    if new_status == "done":
+        if task.status != "open":
+            # Report the real state instead of returning a fake 200 success for
+            # an already-completed/dismissed task.
+            raise HTTPException(status_code=409, detail=f"待办当前状态为 {task.status}，无法标记完成")
         await task_service.complete_task(db, task_id)
-    elif payload.status == "dismissed":
+    elif new_status == "dismissed":
+        if task.status != "open":
+            raise HTTPException(status_code=409, detail=f"待办当前状态为 {task.status}，无法忽略")
         await task_service.dismiss_task(db, task_id)
-    elif payload.status == "reopen":
+    elif new_status == "reopen":
         task.status = "open"
         task.completed_at = None
         task.dismissed_at = None
-    if payload.title is not None:
-        task.title = payload.title
-    if payload.description is not None:
-        task.description = payload.description
-    if payload.priority is not None:
-        task.priority = payload.priority
-    if payload.due_date is not None:
-        task.due_date = payload.due_date
+
+    # exclude_unset lets a client clear description / due_date with an explicit
+    # null; previously `is not None` silently ignored those requests.
+    for field in ("title", "description", "priority", "due_date"):
+        if field in data:
+            setattr(task, field, data[field])
     await db.commit()
     await db.refresh(task)
     return _to_out(task)

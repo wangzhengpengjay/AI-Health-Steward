@@ -189,7 +189,14 @@ export default function Assess() {
         </div>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {scales.map((meta) => (
-            <ScaleDetailFetcher key={meta.code} code={meta.code} memberId={currentMemberId} />
+            <ScaleDetailFetcher
+              // Include the member in the key: without it React reused the same
+              // card instance across a member switch, so answers already given
+              // for member A stayed selected and could be submitted under B.
+              key={`${currentMemberId}-${meta.code}`}
+              code={meta.code}
+              memberId={currentMemberId}
+            />
           ))}
         </div>
         <ResultHistory memberId={currentMemberId} />

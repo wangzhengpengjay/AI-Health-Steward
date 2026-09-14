@@ -135,7 +135,9 @@ class Lifestyle(Base):
     member_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
     )
-    category: Mapped[str] = mapped_column(String(16), nullable=False)  # smoking/drinking/exercise/sleep/diet
+    # 32 chars so literals like "medication_mention" (18) fit; String(16) made
+    # every chat-extracted medication mention fail on PostgreSQL.
+    category: Mapped[str] = mapped_column(String(32), nullable=False)  # smoking/drinking/exercise/sleep/diet/symptom/medication_mention
     status: Mapped[str] = mapped_column(String(128), nullable=False)
     frequency: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     recorded_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)

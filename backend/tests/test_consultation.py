@@ -26,6 +26,50 @@ class TestRiskAssessment:
     def test_empty_input_defaults_to_b(self) -> None:
         assert ConsultationService._assess_risk("", "") == "B"
 
+    # -- false-positive regressions -------------------------------------
+    # The classifier used to match keywords against user_message + reply
+    # combined. An assistant answering a health question almost always writes
+    # "诊断"/"用药", so virtually every reply was graded S ("禁止输出") once the
+    # streaming endpoint started reporting the risk level.
+
+    def test_clinical_vocabulary_in_reply_does_not_raise_level(self) -> None:
+        assert ConsultationService._assess_risk(
+            "我的血压正常吗？",
+            "您的血压 120/80，属于正常范围。本建议不替代医生诊断，请遵医嘱用药。",
+        ) == "B"
+
+    def test_reply_mentioning_medication_is_not_s_level(self) -> None:
+        assert ConsultationService._assess_risk(
+            "高血压平时要注意什么",
+            "建议低盐饮食、规律用药，并定期监测血压。",
+        ) == "B"
+
+    def test_report_review_is_not_s_level(self) -> None:
+        assert ConsultationService._assess_risk(
+            "帮我看看这份体检报告",
+            "报告显示血脂偏高，诊断建议：复查血脂四项。",
+        ) == "B"
+
+    # -- genuine emergency wording in the reply --------------------------
+
+    def test_reply_escalating_to_urgent_care_is_a_level(self) -> None:
+        assert ConsultationService._assess_risk(
+            "血糖有点高",
+            "该数值已达到危急值，请立即就医。",
+        ) == "A"
+
+    def test_user_emergency_symptom_is_a_level(self) -> None:
+        assert ConsultationService._assess_risk("我突然喘不上气", "请尽快处理。") == "A"
+
+    # -- prescription requests are still S -------------------------------
+
+    def test_drug_class_between_verb_and_object_is_s_level(self) -> None:
+        """Chinese inserts the drug class: 帮我开点降压药."""
+        assert ConsultationService._assess_risk("帮我开点降压药", "我不能开药。") == "S"
+
+    def test_asking_what_to_take_is_s_level(self) -> None:
+        assert ConsultationService._assess_risk("我该吃什么药", "请遵医嘱。") == "S"
+
 
 @pytest.mark.asyncio
 async def test_execute_tool_call_commits_after_success() -> None:
@@ -138,6 +182,38 @@ class TestBpTimestampAlignment:
         a2 = json.loads(dia.arguments)["measured_at"]
         assert a1 and a2
         assert a1 == a2
+
+    def test_two_measurements_in_one_round_keep_separate_timestamps(self) -> None:
+        """一条消息报告两次血压时, 两组测量必须各自对齐, 不能压成同一时间点.
+
+        Regression: alignment used to run across every blood-pressure call in the
+        round, so "早上 130/85, 晚上 145/95" collapsed to one timestamp and the
+        systolic/diastolic values were paired wrongly by the frontend.
+        """
+        sys1 = _bp_call("systolic_blood_pressure", "2026-07-22T08:00:00")
+        dia1 = _bp_call("diastolic_blood_pressure", "2026-07-22T08:00:00")
+        sys2 = _bp_call("systolic_blood_pressure", "2026-07-22T20:00:00")
+        dia2 = _bp_call("diastolic_blood_pressure", "2026-07-22T20:00:00")
+        ConsultationService._align_bp_measured_at([sys1, dia1, sys2, dia2])
+
+        morning = json.loads(sys1.arguments)["measured_at"]
+        assert morning == json.loads(dia1.arguments)["measured_at"] == "2026-07-22T08:00:00"
+        evening = json.loads(sys2.arguments)["measured_at"]
+        assert evening == json.loads(dia2.arguments)["measured_at"] == "2026-07-22T20:00:00"
+        assert morning != evening
+
+    def test_two_measurements_missing_timestamps_do_not_collapse(self) -> None:
+        sys1 = _bp_call("systolic_blood_pressure", None)
+        dia1 = _bp_call("diastolic_blood_pressure", None)
+        sys2 = _bp_call("systolic_blood_pressure", None)
+        dia2 = _bp_call("diastolic_blood_pressure", None)
+        ConsultationService._align_bp_measured_at([sys1, dia1, sys2, dia2])
+        t1 = json.loads(sys1.arguments)["measured_at"]
+        t2 = json.loads(sys2.arguments)["measured_at"]
+        assert t1 and t2
+        # Each pair is internally consistent.
+        assert t1 == json.loads(dia1.arguments)["measured_at"]
+        assert t2 == json.loads(dia2.arguments)["measured_at"]
 
     def test_non_bp_metric_not_modified(self) -> None:
         """非血压指标(如血糖)不受影响. """

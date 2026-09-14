@@ -164,20 +164,31 @@ async def _build_profile_for_prompt(
     allergy_result = await db.execute(
         select(Allergy).where(Allergy.member_id == member_id)
     )
-    allergies = [a.allergen for a in allergy_result.scalars().all()]
+    # Model column is `name` (+ `type` / `severity`); `allergen` does not exist,
+    # so building this list raised AttributeError -> HTTP 500 for any member
+    # that had at least one allergy on file.
+    allergies = [
+        {"name": a.name, "type": a.type, "severity": a.severity}
+        for a in allergy_result.scalars().all()
+    ]
 
     # Family history
     fh_result = await db.execute(
         select(FamilyHistory).where(FamilyHistory.member_id == member_id)
     )
-    family_history = [fh.condition for fh in fh_result.scalars().all()]
+    # Model column is `disease_name` (+ `relation`); `condition` does not exist.
+    family_history = [
+        {"relation": fh.relation, "disease": fh.disease_name}
+        for fh in fh_result.scalars().all()
+    ]
 
     # Lifestyle
     ls_result = await db.execute(
         select(Lifestyle).where(Lifestyle.member_id == member_id)
     )
+    # Model columns are `category` / `status` / `frequency`.
     lifestyles = [
-        {"type": ls.lifestyle_type, "detail": ls.detail}
+        {"type": ls.category, "detail": ls.status, "frequency": ls.frequency}
         for ls in ls_result.scalars().all()
     ]
 

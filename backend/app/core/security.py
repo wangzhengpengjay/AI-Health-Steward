@@ -73,18 +73,38 @@ _chat_limiter = _SlidingWindowLimiter(
     window_seconds=60,
 )
 
+# Named limiters, created once. ``rate_limited()`` used to build a fresh
+# _SlidingWindowLimiter on every call, so /chat and /chat/stream each got an
+# independent counter — a client could use 2x the intended budget by alternating
+# endpoints. Sharing a named limiter makes the documented "per-member limit"
+# actually hold across the chat surface.
+_LIMITERS: dict[str, _SlidingWindowLimiter] = {"chat": _chat_limiter}
+
+
+def _get_limiter(name: str, max_requests: int, window_seconds: int) -> _SlidingWindowLimiter:
+    limiter = _LIMITERS.get(name)
+    if limiter is None:
+        limiter = _SlidingWindowLimiter(
+            max_requests=max_requests, window_seconds=window_seconds
+        )
+        _LIMITERS[name] = limiter
+    return limiter
+
 
 def rate_limited(
-    max_requests: int | None = None, window_seconds: int = 60
+    name: str = "chat",
+    max_requests: int | None = None,
+    window_seconds: int = 60,
 ) -> Callable:
     """Return a FastAPI dependency that rate-limits a route.
 
     Key is derived from the request path's member_id (if present) else the
-    client host. When max_requests is None, uses the global chat limit.
+    client host. Routes that should share a budget must pass the same ``name``.
+    When max_requests is None, uses the global chat limit.
     """
     if max_requests is None:
         max_requests = settings.CHAT_RATE_LIMIT_PER_MIN
-    limiter = _SlidingWindowLimiter(max_requests=max_requests, window_seconds=window_seconds)
+    limiter = _get_limiter(name, max_requests, window_seconds)
 
     async def dependency(request: Request) -> None:
         # Extract member_id from path like /members/{id}/chat

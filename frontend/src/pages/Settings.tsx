@@ -26,7 +26,7 @@ export default function Settings() {
   const [userdataPath, setUserdataPath] = useState('')
   const [userDataMsg, setUserDataMsg] = useState<string | null>(null)
 
-  const { data: providers, isLoading } = useQuery({
+  const { data: providers, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['settings-providers'],
     queryFn: settingsApi.getProviders,
   })
@@ -145,12 +145,35 @@ export default function Settings() {
     saveMutation.mutate(payload)
   }
 
-  if (isLoading || !providers) {
+  if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <span className="material-symbols-rounded animate-spin text-3xl text-primary">
           progress_activity
         </span>
+      </div>
+    )
+  }
+
+  // Distinguish "failed to load" from "still loading". Previously
+  // `isLoading || !providers` stayed true forever when the request failed, so a
+  // backend outage left the settings page spinning with no explanation.
+  if (isError || !providers) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <span className="material-symbols-rounded text-5xl text-slate-300">cloud_off</span>
+          <p className="mt-3 text-slate-600">无法加载设置</p>
+          <p className="mt-1 text-sm text-slate-400">
+            {error instanceof Error ? error.message : '请检查后端服务是否可用'}
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="mt-4 rounded-field bg-primary px-4 py-2 text-sm text-white transition hover:opacity-90"
+          >
+            重试
+          </button>
+        </div>
       </div>
     )
   }

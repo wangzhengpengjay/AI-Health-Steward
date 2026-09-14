@@ -55,6 +55,57 @@ def test_previous_week_boundaries():
     assert s == date(2026, 8, 3) and e == date(2026, 8, 9)
 
 
+# ---------------------------------------------------------------------------
+# Catch-up (the process may have been stopped on the due day)
+# ---------------------------------------------------------------------------
+
+def test_candidate_periods_backfills_a_missed_monday():
+    """Stopped Sunday 23:00 / started Tuesday 09:00 must still produce the
+    missed weekly summary instead of skipping that week forever."""
+    tuesday = date(2026, 8, 11)  # Monday 08-10 was the trigger day
+    candidates = summary_scheduler._candidate_periods(tuesday)
+    assert ("weekly", date(2026, 8, 3), date(2026, 8, 9)) in candidates
+
+
+def test_candidate_periods_backfills_a_missed_first_of_month():
+    # 2026-08-03 is a Monday; the Aug 1 month trigger was missed
+    candidates = summary_scheduler._candidate_periods(date(2026, 8, 3))
+    assert ("monthly", date(2026, 7, 1), date(2026, 7, 31)) in candidates
+
+
+def test_candidate_periods_backfills_a_missed_new_year():
+    candidates = summary_scheduler._candidate_periods(date(2026, 1, 5))
+    assert ("annual", date(2025, 1, 1), date(2025, 12, 31)) in candidates
+
+
+def test_candidate_periods_are_deduplicated_and_ordered():
+    candidates = summary_scheduler._candidate_periods(date(2026, 1, 5))
+    assert len(candidates) == len(set(candidates))
+    ends = [end for _, _, end in candidates]
+    assert ends == sorted(ends), "periods must be returned oldest-first"
+
+
+def test_candidate_periods_respects_lookback():
+    """Periods whose trigger day is older than the window are not backfilled."""
+    today = date(2026, 8, 11)
+    # Week of 07-27..08-02 was triggered on Monday 08-03 (8 days before today).
+    wide = summary_scheduler._candidate_periods(today, lookback_days=14)
+    assert ("weekly", date(2026, 7, 27), date(2026, 8, 2)) in wide
+
+    narrow = summary_scheduler._candidate_periods(today, lookback_days=7)
+    assert ("weekly", date(2026, 7, 27), date(2026, 8, 2)) not in narrow
+    # The most recent week is still inside the narrow window.
+    assert ("weekly", date(2026, 8, 3), date(2026, 8, 9)) in narrow
+
+
+
+def test_candidate_periods_includes_due_day_period():
+    """Behaviour on the exact due day must be preserved."""
+    candidates = summary_scheduler._candidate_periods(date(2026, 8, 10))
+    assert ("weekly", date(2026, 8, 3), date(2026, 8, 9)) in candidates
+
+
+
 def test_previous_month_boundaries():
     s, e = summary_scheduler._previous_month(date(2026, 8, 1))
     assert s == date(2026, 7, 1) and e == date(2026, 7, 31)

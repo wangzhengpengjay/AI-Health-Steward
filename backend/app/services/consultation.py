@@ -90,8 +90,56 @@ SYSTEM_PROMPT = """\
 不要在同一轮里一次性索要全部量表，一次只推荐与当前话题最相关的一个。
 """
 
-_S_LEVEL_KEYWORDS = ["停药", "处方", "诊断", "开药"]
-_A_LEVEL_KEYWORDS = ["用药", "药物", "相互作用", "副作用", "胸痛", "呼吸困难", "急症"]
+# Risk keywords. IMPORTANT: the S/A lists are matched against the USER's message
+# only (see _assess_risk). Bare clinical nouns such as "诊断" / "用药" are far too
+# common to be useful — the assistant itself uses them in normal replies — so the
+# S list uses request phrasings and the A list uses symptom/interaction terms.
+_S_LEVEL_KEYWORDS = [
+    "停药",
+    "开药",
+    # Chinese commonly inserts the drug class between verb and object
+    # ("帮我开点降压药"), so match the request prefix rather than a full phrase.
+    "开点",
+    "开个",
+    "开些",
+    "帮我开",
+    "给我开",
+    "配药",
+    "处方",
+    "帮我诊断",
+    "给我诊断",
+    "诊断一下",
+    "我该吃什么药",
+    "换个药",
+]
+_A_LEVEL_KEYWORDS = [
+    "胸痛",
+    "胸闷痛",
+    "呼吸困难",
+    "喘不上气",
+    "急症",
+    "急诊",
+    "窒息",
+    "大出血",
+    "昏迷",
+    "抽搐",
+    "剧烈头痛",
+    "相互作用",
+    "副作用",
+    "过敏反应",
+    "中毒",
+]
+# Scanned in the assistant reply: the model itself escalated to urgent care.
+_A_LEVEL_REPLY_KEYWORDS = [
+    "立即就医",
+    "马上就医",
+    "尽快就医",
+    "立即就诊",
+    "拨打 120",
+    "拨打120",
+    "呼叫急救",
+    "前往急诊",
+]
 
 
 class ConsultationService:
@@ -218,6 +266,9 @@ class ConsultationService:
             yield ("report", json.dumps(report_data, ensure_ascii=False, default=str))
 
         max_rounds = 5
+        # Collected so the streaming client can render the same "已查询健康指标"
+        # evidence badges the non-streaming endpoint returns.
+        tool_call_records: list[dict[str, Any]] = []
 
         for _ in range(max_rounds):
             response: ModelResponse = await provider.chat(
@@ -231,6 +282,18 @@ class ConsultationService:
                     yield ("delta", delta)
                 reply_text = "".join(full_reply)
                 await self._save_message(member_id, "assistant", reply_text, source)
+                # Emit the risk assessment for the streaming path. Previously it
+                # was only computed by the non-streaming endpoint, so the S-level
+                # block and the A-level "建议立即就医" banner never appeared in
+                # the UI (the frontend only ever calls /chat/stream).
+                yield ("risk", json.dumps(
+                    {
+                        "risk_level": self._assess_risk(user_message, reply_text),
+                        "tool_calls": tool_call_records,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ))
                 # Lightweight intent detection (async, non-blocking for the reply)
                 intent_data = await self._detect_visit_intent(provider, user_message)
                 if intent_data:
@@ -246,6 +309,9 @@ class ConsultationService:
             self._align_bp_measured_at(response.tool_calls)
             for tc in response.tool_calls:
                 result = await self._execute_tool_call(tc, member_id)
+                tool_call_records.append(
+                    {"name": tc.name, "arguments": tc.arguments, "result": result}
+                )
                 messages.append(Message(role="tool", content=json.dumps(result, ensure_ascii=False, default=str), name=tc.name, tool_call_id=tc.id))
 
         full_reply: list[str] = []
@@ -254,6 +320,14 @@ class ConsultationService:
             yield ("delta", delta)
         reply_text = "".join(full_reply)
         await self._save_message(member_id, "assistant", reply_text, source)
+        yield ("risk", json.dumps(
+            {
+                "risk_level": self._assess_risk(user_message, reply_text),
+                "tool_calls": tool_call_records,
+            },
+            ensure_ascii=False,
+            default=str,
+        ))
         # Lightweight intent detection (async, non-blocking for the reply)
         intent_data = await self._detect_visit_intent(provider, user_message)
         if intent_data:
@@ -548,11 +622,18 @@ class ConsultationService:
         血压作为两条独立 MetricRecord(收缩压/舒张压)存储，前端按 measured_at 精确配对合并展示。
         若模型生成的两次提取时间戳不一致，会把同一组血压拆成两条残缺记录(如"收缩压 -- / 舒张压 90")。
         此方法在保存前把同轮收缩压/舒张压的 measured_at 对齐为同一确定值，从源头防呆。
+
+        IMPORTANT: alignment happens **within each systolic/diastolic pair**, not
+        across the whole round. A single message may legitimately report several
+        measurements ("早上 130/85，晚上 145/95"); forcing one timestamp onto all
+        four calls collapsed them into one time point and mis-paired the values
+        (e.g. 130 with 95).
         """
         if not tool_calls:
             return tool_calls
 
-        bp_calls: list[ToolCall] = []
+        bp_metrics = set(ConsultationService.BP_METRICS)
+        bp_calls: list[tuple[ToolCall, str]] = []
         for tc in tool_calls:
             if tc.name != "extract_and_save":
                 continue
@@ -562,29 +643,58 @@ class ConsultationService:
                 continue
             if args.get("data_type") != "metric":
                 continue
-            if args.get("metric_name") in ConsultationService.BP_METRICS:
-                bp_calls.append(tc)
+            name = args.get("metric_name")
+            if name in bp_metrics:
+                bp_calls.append((tc, name))
 
-        # 仅当同轮同时覆盖收缩压和舒张压时才需要对齐
-        names = {json.loads(tc.arguments).get("metric_name") for tc in bp_calls}
-        if not {"systolic_blood_pressure", "diastolic_blood_pressure"}.issubset(names):
+        if not bp_calls:
             return tool_calls
 
-        # 统一时间戳：优先用已给的合法测量时间，否则用当前时间
-        unified = None
-        for tc in bp_calls:
-            args = json.loads(tc.arguments)
-            if args.get("measured_at"):
-                unified = args["measured_at"]
-                break
-        if unified is None:
-            unified = datetime.now(timezone.utc).isoformat()
+        # Split the round into complete (systolic, diastolic) measurement groups,
+        # preserving order.
+        groups: list[list[ToolCall]] = []
+        pending: list[ToolCall] = []
+        pending_names: set[str] = set()
+        for tc, name in bp_calls:
+            if name in pending_names:
+                # The same metric twice in a row: the previous group was partial.
+                groups.append(pending)
+                pending, pending_names = [], set()
+            pending.append(tc)
+            pending_names.add(name)
+            if pending_names == bp_metrics:
+                groups.append(pending)
+                pending, pending_names = [], set()
+        if pending:
+            groups.append(pending)
 
-        for tc in bp_calls:
-            args = json.loads(tc.arguments)
-            args["measured_at"] = unified
-            tc.arguments = json.dumps(args, ensure_ascii=False)
+        for group in groups:
+            names = set()
+            parsed: list[tuple[ToolCall, dict]] = []
+            for tc in group:
+                try:
+                    args = json.loads(tc.arguments) if tc.arguments else {}
+                except json.JSONDecodeError:
+                    continue
+                parsed.append((tc, args))
+                names.add(args.get("metric_name"))
+            if not bp_metrics.issubset(names):
+                continue  # incomplete pair: nothing to align
+
+            # Unified timestamp: prefer the first valid one given in the group.
+            unified = None
+            for _tc, args in parsed:
+                if args.get("measured_at"):
+                    unified = args["measured_at"]
+                    break
+            if unified is None:
+                unified = datetime.now(timezone.utc).isoformat()
+
+            for tc, args in parsed:
+                args["measured_at"] = unified
+                tc.arguments = json.dumps(args, ensure_ascii=False)
         return tool_calls
+
 
     async def _execute_tool_call(self, tc: ToolCall, member_id: int) -> dict[str, Any]:
         tool = self.tools.get_tool(tc.name)
@@ -609,12 +719,32 @@ class ConsultationService:
 
     @staticmethod
     def _assess_risk(user_message: str, reply: str) -> str:
-        combined = (user_message + reply).lower()
-        if any(kw in combined for kw in _S_LEVEL_KEYWORDS):
+        """Classify the risk level of a consultation turn.
+
+        Judged primarily on the **user's** message. The assistant's own reply
+        naturally contains clinical vocabulary ("诊断", "用药") on essentially
+        every turn of a health assistant, so including it in the same keyword
+        match made almost every response look like an S-level
+        "禁止输出" case. The reply is only scanned for genuine emergency
+        wording that the model itself surfaced.
+
+        S — the user is asking the assistant to prescribe / stop / change
+            medication or to act as a diagnosing doctor (must be refused).
+        A — emergency symptoms, medication-interaction questions, or a reply
+            that tells the user to seek immediate care.
+        B — routine health questions.
+        """
+        user = (user_message or "").lower()
+        if any(kw in user for kw in _S_LEVEL_KEYWORDS):
             return "S"
-        if any(kw in combined for kw in _A_LEVEL_KEYWORDS):
+        if any(kw in user for kw in _A_LEVEL_KEYWORDS):
+            return "A"
+
+        assistant_reply = (reply or "").lower()
+        if any(kw in assistant_reply for kw in _A_LEVEL_REPLY_KEYWORDS):
             return "A"
         return "B"
+
 
     @staticmethod
     async def _detect_visit_intent(

@@ -23,6 +23,11 @@ from app.services.tools.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/members", tags=["chat"])
 
+# Strong references to fire-and-forget background tasks. asyncio only holds a
+# weak reference, so without this the compaction task can be garbage-collected
+# before it runs and long-term memory silently stops updating.
+_background_tasks: set[asyncio.Task] = set()
+
 
 async def _compress_memory_in_background(member_id: int, router: ModelRouter) -> None:
     """后台压缩长期记忆: 使用独立 DB session, 不占用 SSE 连接/请求 session.
@@ -246,7 +251,9 @@ async def chat_stream(
         # 不阻塞流式收尾, 连接在 DONE 后立即关闭.
         yield "data: [DONE]\n\n"
         try:
-            asyncio.create_task(_compress_memory_in_background(member_id, model_router))
+            task = asyncio.create_task(_compress_memory_in_background(member_id, model_router))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception:  # noqa: BLE001
             logger.exception("Could not schedule background memory compaction for member %s", member_id)
 

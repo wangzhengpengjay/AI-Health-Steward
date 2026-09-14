@@ -95,17 +95,29 @@ class ExtractAndSaveTool(HealthTool):
         measured_at_str = kwargs.get("measured_at")
         measured_at = self._parse_datetime(measured_at_str) if measured_at_str else datetime.now(timezone.utc)
 
-        # P0-2: 按成员年龄自动填充默认参考范围并计算异常/危急
-        from app.core.reference_ranges import is_critical_value, resolve_reference_range
+        # Server-side reference range + abnormal/critical evaluation. Uses the
+        # same helper as manual entry and report archival so all three write
+        # paths agree. The previous inline check required BOTH bounds to be
+        # non-None, which silently disabled abnormality detection for one-sided
+        # metrics (e.g. hdl_cholesterol) and skipped the clinical critical
+        # thresholds for everything else.
+        from app.core.reference_ranges import evaluate_metric, plausible_range_error
+
+        value_f = float(value)
         member = await db.get(FamilyMember, member_id)
         age = _age(member.birth_date) if member else None
-        ref_lo, ref_hi = resolve_reference_range(metric_name, age)
-        value_f = float(value)
-        is_abnormal = False
-        is_critical = False
-        if ref_lo is not None and ref_hi is not None:
-            is_abnormal = not (ref_lo <= value_f <= ref_hi)
-            is_critical = is_critical_value(metric_name, value_f, age)
+
+        implausible = plausible_range_error(metric_name, value_f)
+        if implausible:
+            return {
+                "saved": False,
+                "data_type": "metric",
+                "error": f"{implausible}，请确认后重新提供",
+            }
+
+        ref_lo, ref_hi, is_abnormal, is_critical = evaluate_metric(
+            metric_name, value_f, age
+        )
 
         record = MetricRecord(
             member_id=member_id,

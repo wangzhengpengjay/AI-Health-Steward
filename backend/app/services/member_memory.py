@@ -14,7 +14,6 @@ Design:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,6 +118,12 @@ async def maybe_compact_memory(
         return member.memory_summary
 
     member.memory_summary = new_summary
-    member.memory_summary_updated_at = datetime.now(timezone.utc)
+    # Advance the watermark to the timestamp of the LAST message actually
+    # summarized — not to "now". A single pass only reads
+    # _MAX_COMPACT_MESSAGES (oldest first), so setting the watermark to now
+    # marked everything beyond that batch as already-summarized and dropped it
+    # from long-term memory permanently (e.g. a 50-message backlog silently lost
+    # messages 21-50 while the count check kept reporting work outstanding).
+    member.memory_summary_updated_at = rows[-1].created_at
     await db.flush()
     return new_summary

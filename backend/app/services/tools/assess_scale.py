@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.assessment_scales import get_scale, list_scales
@@ -79,31 +78,43 @@ class AssessScaleTool(HealthTool):
             }
 
         # Mode 2: score submission
+        problems = scale.validate_answers(answers)
+        if problems:
+            return {"ok": False, "message": "答卷不完整或取值非法：" + "；".join(problems)}
+
         try:
             total, detail = scale.score(answers)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "message": f"答案格式不正确：{exc}"}
 
         tier = detail["tier"]
-        # persist
-        recent = await db.execute(
-            select(ScaleResult)
-            .where(ScaleResult.member_id == member_id, ScaleResult.scale_code == code)
-            .order_by(ScaleResult.created_at.desc())
-            .limit(1)
+        risk_level = tier["level"]
+        risk_label = tier["label"]
+        advice = tier.get("advice")
+
+        # Item-level safety rules override the total-score tier (e.g. PHQ-9
+        # item 9 self-harm). Must match the REST endpoint's behaviour.
+        red_flags = scale.evaluate_red_flags(answers)
+        if red_flags:
+            primary = red_flags[0]
+            risk_level = primary.get("level", "critical")
+            risk_label = primary.get("label", risk_label)
+            advice = primary.get("advice", advice)
+
+        # Persist every submission. Previously results were only stored when the
+        # member had no prior result for this scale, so all later assessments
+        # were silently dropped from the history.
+        result = ScaleResult(
+            member_id=member_id,
+            scale_code=code,
+            answers=json.dumps(answers, ensure_ascii=False),
+            total_score=total,
+            risk_level=risk_level,
+            risk_label=risk_label,
+            advice=advice,
         )
-        if recent.scalars().first() is None:
-            result = ScaleResult(
-                member_id=member_id,
-                scale_code=code,
-                answers=json.dumps(answers, ensure_ascii=False),
-                total_score=total,
-                risk_level=tier["level"],
-                risk_label=tier["label"],
-                advice=tier.get("advice"),
-            )
-            db.add(result)
-            await db.flush()
+        db.add(result)
+        await db.flush()
 
         return {
             "ok": True,
@@ -111,8 +122,9 @@ class AssessScaleTool(HealthTool):
             "code": scale.code,
             "name": scale.name,
             "total_score": total,
-            "risk_level": tier["level"],
-            "risk_label": tier["label"],
-            "advice": tier.get("advice"),
+            "risk_level": risk_level,
+            "risk_label": risk_label,
+            "advice": advice,
+            "red_flags": [rule["label"] for rule in red_flags],
             "caveat": scale.caveat,
         }

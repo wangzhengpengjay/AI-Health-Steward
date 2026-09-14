@@ -6,6 +6,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.reference_ranges import plausible_range_error
+
 
 class MetricRecordBase(BaseModel):
     metric_name: str = Field(..., min_length=1)
@@ -20,49 +22,45 @@ class MetricRecordBase(BaseModel):
 
 class MetricRecordCreate(MetricRecordBase):
     source_type: str = Field("manual", pattern=r"^(manual|report|chat_extract)$")
-    # is_abnormal / is_critical are computed server-side, not accepted from client
+    # Accepted for backwards compatibility but always recomputed server-side
+    # from the reference-range rules (app.core.reference_ranges.evaluate_metric).
     is_abnormal: Optional[bool] = None
     is_critical: Optional[bool] = None
 
     @model_validator(mode="after")
-    def _compute_abnormal(self) -> "MetricRecordCreate":
-        if self.reference_lower is not None and self.reference_upper is not None:
-            self.is_abnormal = not (self.reference_lower <= self.value <= self.reference_upper)
-            self.is_critical = bool(
-                self.is_abnormal
-                and (
-                    self.value < self.reference_lower * 0.5
-                    or self.value > self.reference_upper * 1.5
-                )
-            )
-        else:
-            self.is_abnormal = False
-            self.is_critical = False
+    def _validate_plausible_value(self) -> "MetricRecordCreate":
+        """Reject physiologically impossible values.
+
+        Without this, a typo such as weight=-10 or systolic=99999 was stored and
+        immediately raised a fake "危急值，请尽快就医" alert, which erodes trust
+        in the alerting mechanism.
+
+        Note: this lives on the *Create* schema only. Putting it on the shared
+        base would also run during response serialization and make every read
+        endpoint fail with a 500 as soon as one legacy out-of-range row exists.
+        """
+        error = plausible_range_error(self.metric_name, self.value)
+        if error:
+            raise ValueError(error)
         return self
 
 
 class MetricRecordUpdate(BaseModel):
-    """Partial update for a metric record. Re-computes abnormal/critical."""
+    """Partial update for a metric record.
+
+    ``is_abnormal`` / ``is_critical`` are declared (but ignored) so the router
+    can assign its server-computed values without tripping Pydantic. Previously
+    they were missing, so any update that carried both reference bounds failed
+    with a 422 "object has no field" error.
+    """
     value: Optional[float] = None
     unit: Optional[str] = Field(None, max_length=32)
     reference_lower: Optional[float] = None
     reference_upper: Optional[float] = None
     measured_at: Optional[datetime] = None
     context: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _recompute_abnormal(self) -> "MetricRecordUpdate":
-        if self.value is not None and self.reference_lower is not None and self.reference_upper is not None:
-            self.is_abnormal = not (self.reference_lower <= self.value <= self.reference_upper)
-            self.is_critical = bool(
-                self.is_abnormal
-                and (
-                    self.value < self.reference_lower * 0.5
-                    or self.value > self.reference_upper * 1.5
-                )
-            )
-        return self
-
+    is_abnormal: Optional[bool] = None
+    is_critical: Optional[bool] = None
 
 
 class MetricRecordResponse(MetricRecordBase):
@@ -74,3 +72,4 @@ class MetricRecordResponse(MetricRecordBase):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+

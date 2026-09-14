@@ -23,6 +23,7 @@ class AssessmentScale:
         thresholds: list[dict[str, Any]],  # [{"min":0,"max":4,"level":"low","label":"低风险","advice":"..."}]
         trigger_keywords: list[str],
         caveat: str,
+        red_flag_rules: list[dict[str, Any]] | None = None,
     ):
         self.code = code
         self.name = name
@@ -32,6 +33,67 @@ class AssessmentScale:
         self.thresholds = thresholds
         self.trigger_keywords = trigger_keywords
         self.caveat = caveat
+        # Item-level safety rules that must override the total-score tier.
+        # [{"question_id": "phq9", "min_value": 1, "label": ..., "advice": ...}]
+        self.red_flag_rules = red_flag_rules or []
+
+    # -- validation ---------------------------------------------------------
+
+    def validate_answers(self, answers: dict[str, Any]) -> list[str]:
+        """Return human-readable problems with a submission; empty list = valid.
+
+        Previously any payload was accepted: an empty dict was scored as 0
+        ("无明显抑郁"), and out-of-range values such as -5 or 99 produced a
+        confident but meaningless risk tier. Incomplete or invalid submissions
+        must be rejected instead of written to the member's health record.
+        """
+        problems: list[str] = []
+        by_id = {q["id"]: q for q in self.questions}
+
+        unknown = sorted(k for k in answers if k not in by_id)
+        if unknown:
+            problems.append(f"包含未知题目：{', '.join(unknown[:5])}")
+
+        missing = [qid for qid in by_id if qid not in answers]
+        if missing:
+            problems.append(
+                f"有 {len(missing)} 道题未作答，请完成全部 {len(self.questions)} 题"
+                f"（缺少：{', '.join(missing[:5])}）"
+            )
+
+        for qid, val in answers.items():
+            question = by_id.get(qid)
+            if question is None:
+                continue
+            allowed = {o["value"] for o in question.get("options", [])}
+            if allowed and val not in allowed:
+                problems.append(
+                    f"题目 {qid} 的取值 {val} 不在允许范围内，应为 {sorted(allowed)} 之一"
+                )
+        return problems
+
+    # -- safety red flags ---------------------------------------------------
+
+    def evaluate_red_flags(self, answers: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return the item-level safety rules triggered by this submission.
+
+        Example: on PHQ-9 a positive item 9 (thoughts of self-harm) requires
+        immediate follow-up regardless of the total score.
+        """
+        hits: list[dict[str, Any]] = []
+        for rule in self.red_flag_rules:
+            raw = answers.get(rule["question_id"])
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value >= float(rule.get("min_value", 1)):
+                hits.append(rule)
+        return hits
+
+    # -- scoring ------------------------------------------------------------
 
     def score(self, answers: dict[str, Any]) -> tuple[float, dict[str, Any]]:
         """Compute total score and matched risk tier from answer values.
@@ -58,7 +120,13 @@ class AssessmentScale:
             hi = th.get("max", float("inf"))
             if total >= lo and total <= hi:
                 return th
+        # Below every declared range: fall back to the *least* severe tier.
+        # Previously this returned thresholds[-1] (the most severe), so a
+        # negative score was labelled "severe".
+        if total < self.thresholds[0].get("min", 0):
+            return self.thresholds[0]
         return self.thresholds[-1]
+
 
 
 SCALES: dict[str, AssessmentScale] = {}
@@ -114,6 +182,21 @@ _reg(AssessmentScale(
     ],
     trigger_keywords=["情绪低落", "抑郁", "没兴趣", "沮丧", "焦虑", "睡不着", "压力大", "失眠", "想不开"],
     caveat="本结果为自评参考，不能替代专业诊断。若你有自伤或伤害他人的念头，请立即联系专业人士或拨打当地心理援助热线。",
+    # PHQ-9 第 9 题阳性（任何频率）都需立即干预，不得被总分档位掩盖。
+    red_flag_rules=[
+        {
+            "question_id": "phq9",
+            "min_value": 1,
+            "level": "critical",
+            "label": "⚠ 自伤风险提示",
+            "advice": (
+                "你报告了伤害自己的念头。这一点非常重要，请不要独自承受——"
+                "请立即告诉家人或朋友，并尽快联系心理/精神科专业人士。"
+                "如果此刻有立即的危险，请马上拨打当地急救电话或心理援助热线，"
+                "或前往最近的急诊。"
+            ),
+        }
+    ],
 ))
 
 

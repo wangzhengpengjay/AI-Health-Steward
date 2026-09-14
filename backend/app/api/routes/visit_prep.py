@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,6 +64,15 @@ class VisitPrepResponse(BaseModel):
     metrics_trend: list[MetricTrend]
 
 
+async def _ensure_member(db: AsyncSession, member_id: int) -> None:
+    """404 for missing / soft-deleted members instead of a 500 from deeper layers."""
+    from app.models.family import FamilyMember
+
+    member = await db.get(FamilyMember, member_id)
+    if member is None or member.is_deleted:
+        raise HTTPException(status_code=404, detail="成员不存在")
+
+
 @router.post("/{member_id}/visit-prep/suggest-department", response_model=SuggestDeptResponse)
 async def suggest_department(
     member_id: int,
@@ -71,6 +80,7 @@ async def suggest_department(
     db: AsyncSession = Depends(get_db),
 ) -> SuggestDeptResponse:
     """Suggest a clinical department based on chief complaint + diagnosis history."""
+    await _ensure_member(db, member_id)
     result = await suggest_dept(db, member_id, body.chief_complaint)
     return SuggestDeptResponse(**result)
 
@@ -83,6 +93,7 @@ async def create_visit_prep(
     model_router: ModelRouter = Depends(get_model_router),
 ) -> VisitPrepResponse:
     """Generate structured pre-visit guidance. Results are NOT persisted."""
+    await _ensure_member(db, member_id)
     result = await generate_visit_prep(
         db=db,
         router=model_router,

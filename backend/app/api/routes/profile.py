@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,10 +70,18 @@ class AllergyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 class AllergyCreate(BaseModel):
-    type: str
-    name: str
-    severity: str = "mild"
+    type: Literal["drug", "food", "other"] = "drug"
+    name: str = Field(..., min_length=1, max_length=128)
+    severity: Literal["mild", "moderate", "severe", "unknown"] = "mild"
     recorded_at: Optional[date] = None
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _non_blank_name(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("过敏原名称不能为空")
+        return trimmed
 
 class LifestyleOut(BaseModel):
     id: int
@@ -231,8 +239,20 @@ async def add_vaccination(member_id: int, payload: VaccinationCreate, db: AsyncS
     return obj
 
 
-@router.delete("/profile/records/{record_type}/{record_id}", status_code=204)
-async def delete_profile_record(record_type: str, record_id: int, db: AsyncSession = Depends(get_db)):
+@router.delete("/{member_id}/profile/records/{record_type}/{record_id}", status_code=204)
+async def delete_profile_record(
+    member_id: int,
+    record_type: str,
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete one profile record, scoped to its owning member.
+
+    The member id is part of the path and of the WHERE clause: previously the
+    endpoint matched on the primary key alone, so any record of any member
+    (including a soft-deleted one) could be deleted by guessing its id.
+    """
+    await _ensure_member(db, member_id)
     model_map = {
         "diagnoses": Diagnosis,
         "medications": Medication,
@@ -244,7 +264,9 @@ async def delete_profile_record(record_type: str, record_id: int, db: AsyncSessi
     model = model_map.get(record_type)
     if model is None:
         raise HTTPException(status_code=400, detail=f"Unknown record type: {record_type}")
-    r = await db.execute(select(model).where(model.id == record_id))
+    r = await db.execute(
+        select(model).where(model.id == record_id, model.member_id == member_id)
+    )
     obj = r.scalars().first()
     if obj is None:
         raise HTTPException(status_code=404, detail=f"{record_type} {record_id} not found")

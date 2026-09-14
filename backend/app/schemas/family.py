@@ -21,8 +21,43 @@ class FamilyMemberBase(BaseModel):
     occupation: Optional[str] = Field(None, max_length=64)
 
 
+def _clean_member_name(v: Optional[str]) -> Optional[str]:
+    """Trim a member name and reject whitespace-only values.
+
+    ``min_length=1`` accepted "   ", producing a nameless member card and an
+    empty entry in the member switcher.
+    """
+    if v is None:
+        return None
+    trimmed = v.strip()
+    if not trimmed:
+        raise ValueError("姓名不能为空")
+    return trimmed
+
+
+def _clean_birth_date(v: Optional[date]) -> Optional[date]:
+    """A birth date in the future makes the computed age negative."""
+    if v is not None and v > date.today():
+        raise ValueError("出生日期不能晚于今天")
+    return v
+
+
 class FamilyMemberCreate(FamilyMemberBase):
     bmi: Optional[float] = None  # auto-computed if height & weight given
+
+    # Validators live on the input schemas only. Putting them on
+    # FamilyMemberBase would also run them during response serialization
+    # (FamilyMemberResponse inherits from it), making every read endpoint fail
+    # as soon as one legacy row violated the new rule.
+    @field_validator("name", mode="after")
+    @classmethod
+    def _normalize_name(cls, v: str) -> str:
+        return _clean_member_name(v)  # type: ignore[return-value]
+
+    @field_validator("birth_date", mode="after")
+    @classmethod
+    def _normalize_birth_date(cls, v: Optional[date]) -> Optional[date]:
+        return _clean_birth_date(v)
 
     @field_validator("bmi", mode="after")
     @classmethod
@@ -61,6 +96,16 @@ class FamilyMemberUpdate(BaseModel):
     is_breastfeeding: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
     has_coagulopathy: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
     has_heart_failure: Optional[str] = Field(None, pattern=r"^(yes|no|unknown)$")
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _normalize_name(cls, v: Optional[str]) -> Optional[str]:
+        return _clean_member_name(v)
+
+    @field_validator("birth_date", mode="after")
+    @classmethod
+    def _normalize_birth_date(cls, v: Optional[date]) -> Optional[date]:
+        return _clean_birth_date(v)
 
 
 class FamilyMemberResponse(FamilyMemberBase):

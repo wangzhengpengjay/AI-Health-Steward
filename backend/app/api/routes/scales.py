@@ -51,17 +51,32 @@ class ScaleResultOut(BaseModel):
     advice: Optional[str]
     interpretation: Optional[str]
     created_at: datetime
+    # Surfaced so the result screen always shows the self-screening disclaimer
+    # (previously it was only returned by the question endpoint).
+    caveat: Optional[str] = None
+    red_flags: list[str] = []
 
     model_config = {"from_attributes": True}
 
 
 def _result_out(r: ScaleResult) -> ScaleResultOut:
-    """Build ScaleResultOut with derived scale_name for the result page."""
+    """Build ScaleResultOut with derived scale_name / caveat / red flags."""
     scale = get_scale(r.scale_code)
     out = ScaleResultOut.model_validate(r)
     if scale is not None:
         out.scale_name = scale.name
+        out.caveat = scale.caveat
+        # Re-derive item-level safety flags from the stored answers so old rows
+        # surface them too, without needing a schema migration.
+        if r.answers:
+            try:
+                stored = json.loads(r.answers)
+                if isinstance(stored, dict):
+                    out.red_flags = [rule["label"] for rule in scale.evaluate_red_flags(stored)]
+            except (ValueError, TypeError):
+                pass
     return out
+
 
 
 async def _ensure_member(db: AsyncSession, member_id: int) -> None:
@@ -182,19 +197,57 @@ async def submit_scale(
         created = recent.created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-        if (datetime.now(timezone.utc) - created).total_seconds() < 3600 * 12:
-            raise HTTPException(status_code=429, detail="今日已测评过该量表，请稍后再试")
+        elapsed = (datetime.now(timezone.utc) - created).total_seconds()
+        if elapsed < 3600 * 12:
+            retry_at = created + timedelta(hours=12)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "12 小时内不可重复测评同一量表，"
+                    f"可在 {retry_at.astimezone().strftime('%m-%d %H:%M')} 后重试"
+                ),
+            )
+
+    # Reject incomplete or out-of-range submissions instead of scoring them as
+    # 0 ("no depression") or producing a meaningless tier.
+    problems = scale.validate_answers(payload.answers)
+    if problems:
+        raise HTTPException(
+            status_code=422,
+            detail="答卷不完整或取值非法：" + "；".join(problems),
+        )
 
     total, detail = scale.score(payload.answers)
     tier = detail["tier"]
+
+    risk_level = tier["level"]
+    risk_label = tier["label"]
+    advice = tier.get("advice")
+    interpretation = None
+
+    # Item-level safety rules override the total-score tier. On PHQ-9 a positive
+    # item 9 (self-harm thoughts) must never be reported as "无明显抑郁 /
+    # 状态良好" just because the total score is low.
+    red_flags = scale.evaluate_red_flags(payload.answers)
+    if red_flags:
+        primary = red_flags[0]
+        interpretation = (
+            f"总分 {total:g}（{tier['label']}）；因「{primary['label']}」触发条目级安全规则，"
+            "按最高优先级处理。"
+        )
+        risk_level = primary.get("level", "critical")
+        risk_label = primary.get("label", risk_label)
+        advice = primary.get("advice", advice)
+
     result = ScaleResult(
         member_id=member_id,
         scale_code=code,
         answers=json.dumps(payload.answers, ensure_ascii=False),
         total_score=total,
-        risk_level=tier["level"],
-        risk_label=tier["label"],
-        advice=tier.get("advice"),
+        risk_level=risk_level,
+        risk_label=risk_label,
+        advice=advice,
+        interpretation=interpretation,
     )
     db.add(result)
     await db.flush()

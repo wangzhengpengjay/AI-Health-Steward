@@ -6,7 +6,7 @@ import type { ChatResponse,
   MetricRecordInput,
 } from '@/types'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
+export const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
 export class ApiError extends Error {
   status: number
@@ -142,7 +142,7 @@ export const chatApi = {
     memberId: number,
     message: string,
     file?: File,
-  ): AsyncGenerator<{ type: 'delta' | 'report' | 'error' | 'intent'; data: string }> {
+  ): AsyncGenerator<{ type: 'delta' | 'report' | 'error' | 'intent' | 'risk'; data: string }> {
     const formData = new FormData()
     formData.append('message', message)
     if (file) formData.append('file', file)
@@ -175,6 +175,8 @@ export const chatApi = {
               yield { type: 'report', data: parsed.report }
             } else if (parsed.intent) {
               yield { type: 'intent', data: parsed.intent }
+            } else if (parsed.risk) {
+              yield { type: 'risk', data: parsed.risk }
             } else if (parsed.error) {
               yield { type: 'error', data: parsed.error }
             }
@@ -275,8 +277,9 @@ export const profileApi = {
   addVaccination: (memberId: number, data: { vaccine_name: string; dose_no?: string; vaccinated_date?: string; facility?: string }) =>
     request<VaccinationItem>(`/members/${memberId}/profile/vaccinations`, { method: 'POST', body: JSON.stringify(data) }),
 
-  deleteRecord: (recordType: string, recordId: number) =>
-    request<void>(`/members/profile/records/${recordType}/${recordId}`, { method: 'DELETE' }),
+  // memberId is required so the server can scope the delete to its owner.
+  deleteRecord: (memberId: number, recordType: string, recordId: number) =>
+    request<void>(`/members/${memberId}/profile/records/${recordType}/${recordId}`, { method: 'DELETE' }),
 }
 
 // ---- Report Extraction ----

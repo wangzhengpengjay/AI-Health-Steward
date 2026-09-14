@@ -105,11 +105,20 @@ async def update_channel(
 
     changed_config = False
     for field, val in payload.model_dump(exclude_unset=True).items():
-        if val is None:
-            continue
         # Skip placeholders sent by frontend when user didn't change secret/id
-        if field in ("app_secret", "app_id") and val == "__unchanged__":
+        if field in ("app_secret", "app_id") and val in (None, "__unchanged__"):
             continue
+        # member_id=None is meaningful: it unbinds the channel from a member.
+        # The previous blanket `if val is None: continue` made unbinding
+        # impossible.
+        if val is None and field != "member_id":
+            continue
+        if field == "member_id" and val is not None:
+            from app.models.family import FamilyMember
+
+            member = await db.get(FamilyMember, val)
+            if member is None or member.is_deleted:
+                raise HTTPException(status_code=404, detail=f"成员 {val} 不存在")
         if field in ("app_id", "app_secret"):
             changed_config = True
         setattr(ch, field, val)

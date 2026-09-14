@@ -58,8 +58,13 @@ export default function Chat() {
         }))
         setHistory(id, restored)
       })
-      .catch(() => {
-        if (!cancelled) setHistory(id, [])
+      .catch((err) => {
+        // Do NOT mark the history as loaded on failure: `setHistory` sets
+        // historyLoaded=true, which permanently blocked any retry and showed an
+        // empty conversation as if it were the real (empty) history.
+        if (cancelled) return
+        console.error('Failed to load chat history:', err)
+        setError(id, '历史对话加载失败，请重试')
       })
       .finally(() => {
         if (!cancelled) setIsLoadingHistory(false)
@@ -170,6 +175,8 @@ export default function Chat() {
     try {
       let fullContent = ''
       let visitIntent: { visit_intent: boolean; complaint: string } | null = null
+      let riskLevel: ChatMessage['risk_level'] = null
+      let toolCalls: ChatMessage['tool_calls']
       for await (const chunk of chatApi.stream(id, userInput || '请帮我解读这份报告', fileToSend ?? undefined)) {
         if (chunk.type === 'delta') {
           fullContent += chunk.data
@@ -190,6 +197,21 @@ export default function Chat() {
           } catch {
             // ignore parse errors for intent
           }
+        } else if (chunk.type === 'risk') {
+          // Risk level and tool-call evidence are only delivered on the
+          // streaming path. Without consuming them the S-level block and the
+          // "建议立即就医" banner could never appear, because the app only ever
+          // calls /chat/stream (chatApi.send is unused).
+          try {
+            const parsed = JSON.parse(chunk.data) as {
+              risk_level?: ChatMessage['risk_level']
+              tool_calls?: ChatMessage['tool_calls']
+            }
+            riskLevel = parsed.risk_level ?? null
+            toolCalls = parsed.tool_calls?.length ? parsed.tool_calls : undefined
+          } catch {
+            // ignore parse errors for risk
+          }
         } else if (chunk.type === 'error') {
           throw new Error(chunk.data)
         }
@@ -199,6 +221,9 @@ export default function Chat() {
         role: 'assistant',
         content: fullContent || '(空回复)',
         timestamp: new Date().toISOString(),
+        risk_level: riskLevel,
+        isHighRiskAlert: riskLevel === 'S' || riskLevel === 'A',
+        tool_calls: toolCalls,
         visit_intent: visitIntent?.visit_intent ?? false,
         visit_complaint: visitIntent?.complaint,
       }

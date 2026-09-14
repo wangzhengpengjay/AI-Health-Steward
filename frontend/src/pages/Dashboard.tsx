@@ -45,7 +45,8 @@ export default function Dashboard() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: ({ type, id }: { type: string; id: number }) => profileApi.deleteRecord(type, id),
+    mutationFn: ({ type, id }: { type: string; id: number }) =>
+      profileApi.deleteRecord(Number(currentMemberId), type, id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile', currentMemberId] }),
   })
 
@@ -74,6 +75,44 @@ export default function Dashboard() {
     const bd = b.due_date ? new Date(b.due_date).getTime() : Infinity
     return ad - bd
   })
+
+  // NOTE: every hook must run before the early return below. A useMemo
+  // placed after it changed the hook count between the first render
+  // (currentMemberId still null) and the second render (members loaded),
+  // so React threw "Rendered more hooks than during the previous render"
+  // and white-screened the whole app when /dashboard was opened directly.
+ const diagnoses = profile?.diagnoses ?? []
+ const medications = profile?.medications ?? []
+ const allergies = profile?.allergies ?? []
+  const lifestyles = profile?.lifestyles ?? []
+  const surgeries = profile?.surgeries ?? []
+  const vaccinations = profile?.vaccinations ?? []
+
+  // 同病去重：展示最早诊断时间，状态切换同步到该疾病的所有记录
+  const diagnosisGroups = useMemo(() => {
+    const groups = new Map<string, DiagnosisItem[]>()
+    for (const d of diagnoses) {
+      const list = groups.get(d.disease_name) ?? []
+      list.push(d)
+      groups.set(d.disease_name, list)
+    }
+    return [...groups.entries()]
+      .map(([disease_name, items]) => {
+        const sorted = [...items].sort((a, b) => {
+          const da = a.diagnosed_date ?? ''
+          const db = b.diagnosed_date ?? ''
+          if (da !== db) return da < db ? -1 : 1
+          return a.id - b.id
+        })
+        return { disease_name, earliest: sorted[0], ids: sorted.map((d) => d.id) }
+      })
+      .sort((a, b) => {
+        const da = a.earliest.diagnosed_date ?? ''
+        const db = b.earliest.diagnosed_date ?? ''
+        if (da !== db) return da < db ? -1 : 1
+        return 0
+      })
+  }, [diagnoses])
 
   if (!currentMemberId || !member) {
     return (
@@ -120,39 +159,6 @@ export default function Dashboard() {
   const age = member.birth_date
     ? Math.floor((Date.now() - new Date(member.birth_date).getTime()) / 365.25 / 86400000)
     : null
-
- const diagnoses = profile?.diagnoses ?? []
- const medications = profile?.medications ?? []
- const allergies = profile?.allergies ?? []
-  const lifestyles = profile?.lifestyles ?? []
-  const surgeries = profile?.surgeries ?? []
-  const vaccinations = profile?.vaccinations ?? []
-
-  // 同病去重：展示最早诊断时间，状态切换同步到该疾病的所有记录
-  const diagnosisGroups = useMemo(() => {
-    const groups = new Map<string, DiagnosisItem[]>()
-    for (const d of diagnoses) {
-      const list = groups.get(d.disease_name) ?? []
-      list.push(d)
-      groups.set(d.disease_name, list)
-    }
-    return [...groups.entries()]
-      .map(([disease_name, items]) => {
-        const sorted = [...items].sort((a, b) => {
-          const da = a.diagnosed_date ?? ''
-          const db = b.diagnosed_date ?? ''
-          if (da !== db) return da < db ? -1 : 1
-          return a.id - b.id
-        })
-        return { disease_name, earliest: sorted[0], ids: sorted.map((d) => d.id) }
-      })
-      .sort((a, b) => {
-        const da = a.earliest.diagnosed_date ?? ''
-        const db = b.earliest.diagnosed_date ?? ''
-        if (da !== db) return da < db ? -1 : 1
-        return 0
-      })
-  }, [diagnoses])
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-bg-secondary">

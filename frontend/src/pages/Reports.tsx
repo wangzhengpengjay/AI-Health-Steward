@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { reportsApi, type ReportRecord } from '@/lib/api'
+import { BASE_URL, reportsApi, type ReportRecord } from '@/lib/api'
 import { useMemberStore } from '@/stores/memberStore'
 import ReportConfirmModal from '@/components/ReportConfirmModal'
 
@@ -161,10 +161,10 @@ export default function Reports() {
                     </div>
                   ) : (
                     <img
-                      src={`/api/v1/members/${currentMemberId}/reports/${r.id}/file`}
+                      src={`${BASE_URL}/members/${currentMemberId}/reports/${r.id}/file`}
                       alt={r.file_name}
                       className="h-12 w-12 cursor-pointer rounded-field object-cover ring-1 ring-slate-200 transition hover:ring-primary"
-                      onClick={() => setPreviewImage(`/api/v1/members/${currentMemberId}/reports/${r.id}/file`)}
+                      onClick={() => setPreviewImage(`${BASE_URL}/members/${currentMemberId}/reports/${r.id}/file`)}
                     />
                   )}
 

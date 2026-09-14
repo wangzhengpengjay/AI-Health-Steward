@@ -84,6 +84,19 @@ function localDatetimeStr(d: Date = new Date()): string {
   return new Date(d.getTime() - off).toISOString().slice(0, 16)
 }
 
+/**
+ * Convert a `<input type="datetime-local">` value to an ISO-8601 UTC string.
+ *
+ * The input value ("YYYY-MM-DDTHH:mm", no offset) is interpreted as the
+ * browser's local time. The previous implementation appended a hardcoded
+ * '+08:00', which silently shifted every measurement for users outside UTC+8
+ * and mis-parsed the edit form (which was pre-filled from UTC).
+ */
+function localInputToIso(value: string): string {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString()
+}
+
 export default function MetricInput() {
   const { currentMemberId, members } = useMemberStore()
   const [activeTab, setActiveTab] = useState(0)
@@ -727,7 +740,13 @@ export default function MetricInput() {
             }
           }}
           isLoading={addMutation.isPending}
-          error={addMutation.error instanceof ApiError ? addMutation.error.message : null}
+          error={
+            addMutation.error
+              ? addMutation.error instanceof ApiError
+                ? addMutation.error.message
+                : '保存失败，请检查网络后重试'
+              : null
+          }
           memberHeight={currentMember?.height}
         />
       )}
@@ -791,7 +810,7 @@ function AddDataModal({ tab, selectedLineKey, onSelectLine, onClose, onSubmit, i
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const isoTime = measuredAt + ':00+08:00'
+    const isoTime = localInputToIso(measuredAt)
     if (isGroup) {
       // Submit all lines together with the same timestamp
       const entries = tab.lines
@@ -1045,7 +1064,7 @@ function EditModal({ tab, editData, allRecords, onClose, onSubmit, isLoading }: 
   })
   const [measuredAt, setMeasuredAt] = useState(() => {
     const r = groupRecords[0]?.record
-    return r ? new Date(r.measured_at).toISOString().slice(0, 16) : localDatetimeStr()
+    return r ? localDatetimeStr(new Date(r.measured_at)) : localDatetimeStr()
   })
   const [context, setContext] = useState(() => {
     const r = groupRecords[0]?.record
@@ -1054,7 +1073,7 @@ function EditModal({ tab, editData, allRecords, onClose, onSubmit, isLoading }: 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const isoTime = measuredAt + ':00+08:00'
+    const isoTime = localInputToIso(measuredAt)
     const entries = groupRecords
       .map(({ line, record }) => {
         const v = parseFloat(groupValues[line.key] || '')
