@@ -31,6 +31,12 @@ services:
       USERDATA_DIR: "/app/userdata"
     ports:
       - "8000:8000"
+    # Lets the container reach services running on the host (e.g. Ollama).
+    # Without this, `host.docker.internal` does not resolve on plain Linux, so
+    # LOCAL_LLM_BASE=http://host.docker.internal:11434/v1 cannot work there.
+    # Note: `localhost` inside a container is the container itself, not the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       # User health data: bind-mounted to host so files are visible & persistent.
