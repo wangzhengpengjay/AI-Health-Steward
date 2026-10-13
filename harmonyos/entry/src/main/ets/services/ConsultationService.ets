@@ -8,7 +8,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { DatabaseService, DataRow, ColumnValue } from './DatabaseService';
+import { DatabaseService, DataRow, ColumnValue, getMapVal, getMapString, getMapNumber } from './DatabaseService';
 import { LLMClient, getHealthTools, ToolDefinition } from './LLMClient';
 import { ChatMessage, LLMMessage, LLMToolCall, RiskLevel, Priority } from '../models/HealthModels';
 
@@ -122,27 +122,6 @@ function parseToolArgs(argsJson: string): ToolArgs {
   } catch (e) {
     return {};
   }
-}
-
-function getMapVal(row: DataRow, key: string): ColumnValue {
-  const v: ColumnValue | undefined = row.get(key);
-  return v === undefined ? null : v;
-}
-
-function getMapString(row: DataRow, key: string): string {
-  const v: ColumnValue = getMapVal(row, key);
-  if (v !== null && typeof v === 'string') {
-    return v;
-  }
-  return '';
-}
-
-function getMapNumber(row: DataRow, key: string): number {
-  const v: ColumnValue = getMapVal(row, key);
-  if (v !== null && typeof v === 'number') {
-    return v;
-  }
-  return 0;
 }
 
 function getRefRanges(): Map<string, RefRange> {

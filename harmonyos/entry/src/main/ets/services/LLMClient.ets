@@ -13,6 +13,8 @@
 import http from '@ohos.net.http';
 import { LLMMessage, LLMResponse, LLMToolCall, LLMToolCallFunction } from '../models/HealthModels';
 
+const HTTP_OK: number = 200;
+
 // ============================================================
 // 配置
 // ============================================================
@@ -197,7 +199,7 @@ export class LLMClient {
         readTimeout: 120000,
       });
 
-      if (response.responseCode !== 200) {
+      if (response.responseCode !== HTTP_OK) {
         const errBody: string = typeof response.result === 'string' ? response.result : 'non-string error';
         throw new Error(`LLM API error: ${response.responseCode} - ${errBody}`);
       }
@@ -261,7 +263,7 @@ export class LLMClient {
         readTimeout: 120000,
       });
 
-      if (response.responseCode !== 200) {
+      if (response.responseCode !== HTTP_OK) {
         const errBody: string = typeof response.result === 'string' ? response.result : 'non-string error';
         throw new Error(`LLM API error: ${response.responseCode} - ${errBody}`);
       }

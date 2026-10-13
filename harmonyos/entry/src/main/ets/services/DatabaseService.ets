@@ -295,3 +295,28 @@ export class DatabaseService {
     return results;
   }
 }
+
+// ============================================================
+// 公共辅助函数（供其他 service 复用，避免重复代码）
+// ============================================================
+
+export function getMapVal(row: DataRow, key: string): ColumnValue {
+  const v: ColumnValue | undefined = row.get(key);
+  return v === undefined ? null : v;
+}
+
+export function getMapString(row: DataRow, key: string): string {
+  const v: ColumnValue = getMapVal(row, key);
+  if (v !== null && typeof v === 'string') {
+    return v;
+  }
+  return '';
+}
+
+export function getMapNumber(row: DataRow, key: string): number {
+  const v: ColumnValue = getMapVal(row, key);
+  if (v !== null && typeof v === 'number') {
+    return v;
+  }
+  return 0;
+}

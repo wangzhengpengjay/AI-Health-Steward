@@ -8,7 +8,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { DatabaseService, DataRow, ColumnValue } from './DatabaseService';
+import { DatabaseService, DataRow, ColumnValue, getMapVal, getMapString, getMapNumber } from './DatabaseService';
 import { LLMClient } from './LLMClient';
 import { PatrolResult, PatrolTask, Priority, TaskCategory, TaskUrgency } from '../models/HealthModels';
 
@@ -71,31 +71,6 @@ interface AIResultJSON {
 interface LLMMsg {
   role: string;
   content: string;
-}
-
-// ============================================================
-// 辅助函数（避免 row['key'] 索引访问）
-// ============================================================
-
-function getMapVal(row: DataRow, key: string): ColumnValue {
-  const v: ColumnValue | undefined = row.get(key);
-  return v === undefined ? null : v;
-}
-
-function getMapString(row: DataRow, key: string): string {
-  const v: ColumnValue = getMapVal(row, key);
-  if (v !== null && typeof v === 'string') {
-    return v;
-  }
-  return '';
-}
-
-function getMapNumber(row: DataRow, key: string): number {
-  const v: ColumnValue = getMapVal(row, key);
-  if (v !== null && typeof v === 'number') {
-    return v;
-  }
-  return 0;
 }
 
 // ============================================================
