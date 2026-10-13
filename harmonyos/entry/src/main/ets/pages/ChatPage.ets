@@ -17,6 +17,7 @@ import { ChatMessage, RiskLevel } from '../models/HealthModels';
 import { ConsultationService } from '../services/ConsultationService';
 import { DatabaseService } from '../services/DatabaseService';
 import { LLMClient, LLMConfig } from '../services/LLMClient';
+import { relationalStore } from '@kit.ArkData';
 import common from '@ohos.app.ability.common';
 
 interface ToolCallLabel {
@@ -53,7 +54,7 @@ struct Index {
       // TODO: 实际应从安全存储中读取 API Key
       const config: LLMConfig = {
         baseUrl: 'https://api.deepseek.com/v1',
-        apiKey: 'YOUR_API_KEY_HERE',
+        apiKey: 'sk-1e018e6d6ae4429fa3b069cbe5900cb9',
         model: 'deepseek-flash',
         temperature: 0.7,
         maxTokens: 4096,
@@ -61,9 +62,45 @@ struct Index {
       const llm: LLMClient = new LLMClient(config);
       this.consultationService = new ConsultationService(db, llm);
 
+      // 首次启动自动创建默认成员
+      await this.ensureDefaultMember(db);
+
       await this.loadHistory();
     } catch (e) {
       this.error = `初始化失败: ${e}`;
+    }
+  }
+
+  private async ensureDefaultMember(db: DatabaseService): Promise<void> {
+    try {
+      const rs = await db.query(`SELECT COUNT(*) as cnt FROM family_members WHERE is_deleted = 0`, []);
+      const rows = await db.resultSetToArray(rs);
+      const count = rows.length > 0 ? rows[0].get('cnt') : 0;
+      if (count === 0) {
+        const bucket: relationalStore.ValuesBucket = {
+          name: '默认成员',
+          relationship: 'self',
+          birth_date: '1990-01-01',
+          gender: 'unknown',
+          is_deleted: 0,
+        } as relationalStore.ValuesBucket;
+        const memberId: number = await db.insert('family_members', bucket);
+        this.currentMemberId = memberId;
+        console.info(`[Index] Created default member: ${memberId}`);
+      } else {
+        const idVal = rows[0].get('cnt');
+        // 用第一条成员的 ID
+        const rs2 = await db.query(`SELECT id FROM family_members WHERE is_deleted = 0 LIMIT 1`, []);
+        const rows2 = await db.resultSetToArray(rs2);
+        if (rows2.length > 0) {
+          const id = rows2[0].get('id');
+          if (id !== null && typeof id === 'number') {
+            this.currentMemberId = id;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Index] Failed to ensure default member:', e);
     }
   }
 
