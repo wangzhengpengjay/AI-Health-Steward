@@ -133,12 +133,14 @@ _A_LEVEL_KEYWORDS = [
 _A_LEVEL_REPLY_KEYWORDS = [
     "立即就医",
     "马上就医",
-    "尽快就医",
     "立即就诊",
     "拨打 120",
     "拨打120",
     "呼叫急救",
     "前往急诊",
+    # "尽快就医" removed — too broad. AI normally says "建议尽快就医检查"
+    # for elevated readings (e.g. glucose 11.2), which is routine advice, not
+    # an acute emergency. Only explicit emergency wording triggers A-level.
 ]
 
 
