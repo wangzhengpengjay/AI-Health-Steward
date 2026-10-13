@@ -315,20 +315,15 @@ class ConsultationService:
                 if _looks_like_raw_tool_call(response.content or ""):
                     logger.warning("Model returned raw tool-call markup in stream content, retrying without tools")
                     response = await provider.chat(messages, tools=None)
-                # If we already have content from the non-streaming call, send it
-                # as a single delta instead of making a second streaming call.
-                # This avoids the "wait then burst" jank caused by double-calling
-                # the model (first non-stream with tools, then stream without).
-                if response.content and not _looks_like_raw_tool_call(response.content):
-                    reply_text = response.content
-                    yield ("delta", reply_text)
-                else:
-                    # Fallback: stream the response if we have no content yet
-                    full_reply: list[str] = []
-                    async for delta in await provider.chat(messages, tools=None, stream=True):
-                        full_reply.append(delta)
-                        yield ("delta", delta)
-                    reply_text = "".join(full_reply)
+                # We already have the full response from the non-streaming call.
+                # Simulate streaming by sending the content in chunks so the
+                # frontend renders progressively instead of one burst.
+                reply_text = response.content or ""
+                for chunk_start in range(0, len(reply_text), 20):
+                    yield ("delta", reply_text[chunk_start:chunk_start + 20])
+                    # Tiny pause to let the frontend render — mimics real streaming
+                    import asyncio as _aio
+                    await _aio.sleep(0.02)
                 await self._save_message(member_id, "assistant", reply_text, source)
                 # Emit the risk assessment for the streaming path. Previously it
                 # was only computed by the non-streaming endpoint, so the S-level
