@@ -80,12 +80,13 @@ cp .env.example .env
 # 3. Sync config to backend/.env
 cp .env backend/.env
 
-# 4. Build and start (production mode)
+# 4. Create user data directory
+mkdir -p userdata
+
+# 5. Build and start (production mode)
+#    Database migrations run automatically on startup (no manual alembic needed)
 docker compose -f docker-compose.prod.yml build
 docker compose -f docker-compose.prod.yml up -d
-
-# 5. Initialize database (first deploy)
-docker exec health-steward-backend alembic upgrade head
 
 # 6. Access
 # WebUI: http://localhost:5173
@@ -97,15 +98,13 @@ docker exec health-steward-backend alembic upgrade head
 Development mode: hot-reload + HMR, backend Python auto-reloads, frontend TSX instant update:
 
 ```bash
-# 1-3. Same as above (clone, configure .env, cp to backend/.env)
+# 1-3. Same as above (clone, configure .env, cp to backend/.env, mkdir userdata)
 
 # 4. One-command startup (development mode)
+#    Database migrations run automatically on startup (no manual alembic needed)
 docker compose up -d
 
-# 5. Initialize database (first deploy)
-docker exec health-steward-backend alembic upgrade head
-
-# 6. Access
+# 5. Access
 # WebUI: http://localhost:5173
 # API Docs: http://localhost:8000/docs
 ```
