@@ -6,11 +6,13 @@
  * 2. 规则层扫描（异常指标、到期待办等）
  * 3. AI 层推理（LLM 综合画像判断是否需要干预）
  * 4. 输出：主动消息（推送）或 静默记录（不推送）
+ * 
+ * 注意：ArkTS 不支持 Record<K,V>，使用 object 和 Map<K,V> 替代
  */
 
 import { DatabaseService } from './DatabaseService';
-import { LLMClient, HEALTH_TOOLS } from './LLMClient';
-import { ChatMessage, PatrolResult, PatrolTask, Priority, HealthTask } from '../models/HealthModels';
+import { LLMClient } from './LLMClient';
+import { PatrolResult, PatrolTask, Priority } from '../models/HealthModels';
 
 // ============================================================
 // 规则层：参考范围
@@ -36,15 +38,33 @@ const CRITICAL_RULES: MetricRule[] = [
 ];
 
 // ============================================================
-// 打扰规则：频率控制
+// 内部类型
 // ============================================================
 
-const FREQUENCY_LIMITS: Record<string, number> = {
-  critical: 0,   // 不限
-  high: 1,        // 每周1次
-  normal: 1,      // 每天1次
-  low: 0,         // 不推送
-};
+interface HealthSnapshot {
+  member: object;
+  recentMetrics: object[];
+  abnormalMetrics: object[];
+  diagnoses: object[];
+  medications: object[];
+  openTasks: object[];
+  memorySummary: string;
+}
+
+interface RuleAlert {
+  metric_name: string;
+  value: number;
+  unit: string;
+  level: number; // 0 = critical, 1 = abnormal
+  message: string;
+}
+
+interface FrequencyLimit {
+  critical: number;
+  high: number;
+  normal: number;
+  low: number;
+}
 
 // ============================================================
 // 巡检引擎
@@ -61,45 +81,44 @@ export class PatrolEngine {
 
   /**
    * 巡检单个成员
-   * @param memberId 成员ID
-   * @param trigger 触发来源：scheduled | event:abnormal_metric | event:task_due
-   * @returns 巡检结果
    */
   async patrolMember(memberId: number, trigger: string): Promise<PatrolResult> {
     console.info(`[PatrolEngine] Patrolling member ${memberId}, trigger=${trigger}`);
 
     // 1. 构建画像快照
-    const snapshot = await this.buildHealthSnapshot(memberId);
-    
+    const snapshot: HealthSnapshot = await this.buildHealthSnapshot(memberId);
+
     // 2. 规则层扫描
-    const ruleAlerts = this.scanRules(snapshot);
-    
+    const critical: RuleAlert[] = [];
+    const abnormal: RuleAlert[] = [];
+    this.scanRules(snapshot, critical, abnormal);
+
     // 3. 如果规则层发现危急值，直接生成紧急消息
-    if (ruleAlerts.critical.length > 0) {
-      const message = this.formatCriticalMessage(ruleAlerts.critical);
-      const tasks = this.generateTasksFromAlerts(ruleAlerts.critical, 'critical');
+    if (critical.length > 0) {
+      const message: string = this.formatCriticalMessage(critical);
+      const tasks: PatrolTask[] = this.generateTasksFromAlerts(critical, 'critical');
       return {
         should_push: true,
-        message,
+        message: message,
         priority: 'critical',
-        tasks,
+        tasks: tasks,
         patrol_id: `patrol_${Date.now()}_${memberId}`,
       };
     }
 
     // 4. AI 层推理
-    const aiResult = await this.aiInference(snapshot, ruleAlerts.abnormal);
-    
+    const aiResult: PatrolResult = await this.aiInference(snapshot, abnormal, memberId);
+
     // 5. 频率控制
     if (aiResult.should_push) {
-      const allowed = await this.checkFrequency(memberId, aiResult.priority);
+      const allowed: boolean = await this.checkFrequency(memberId, aiResult.priority);
       if (!allowed) {
         return {
           should_push: false,
           message: '',
           priority: 'low',
           tasks: [],
-          patrol_id: `patrol_${Date.now()}_${memberId}`,
+          patrol_id: aiResult.patrol_id,
         };
       }
     }
@@ -111,122 +130,123 @@ export class PatrolEngine {
    * 构建成员健康画像快照
    */
   private async buildHealthSnapshot(memberId: number): Promise<HealthSnapshot> {
-    const db = this.db.getStore();
-
     // 基本信息
     const memberRs = await this.db.query(
       `SELECT * FROM family_members WHERE id = ? AND is_deleted = 0`,
       [String(memberId)]
     );
     const memberRows = this.db.resultSetToArray(memberRs);
-    const member = memberRows[0] || {};
+    const member: object = memberRows.length > 0 ? memberRows[0] : {};
 
     // 最近指标（最近30天）
     const metricsRs = await this.db.query(
       `SELECT * FROM metric_records WHERE member_id = ? AND measured_at >= datetime('now', '-30 days') ORDER BY measured_at DESC`,
       [String(memberId)]
     );
-    const metrics = this.db.resultSetToArray(metricsRs);
+    const recentMetrics: object[] = this.db.resultSetToArray(metricsRs);
 
     // 异常指标
     const abnormalRs = await this.db.query(
       `SELECT * FROM metric_records WHERE member_id = ? AND is_abnormal = 1 ORDER BY measured_at DESC LIMIT 10`,
       [String(memberId)]
     );
-    const abnormal = this.db.resultSetToArray(abnormalRs);
+    const abnormalMetrics: object[] = this.db.resultSetToArray(abnormalRs);
 
     // 诊断
     const diagRs = await this.db.query(
       `SELECT * FROM diagnoses WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const diagnoses = this.db.resultSetToArray(diagRs);
+    const diagnoses: object[] = this.db.resultSetToArray(diagRs);
 
     // 用药
     const medRs = await this.db.query(
       `SELECT * FROM medications WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const medications = this.db.resultSetToArray(medRs);
+    const medications: object[] = this.db.resultSetToArray(medRs);
 
     // 待办任务
     const taskRs = await this.db.query(
       `SELECT * FROM health_tasks WHERE member_id = ? AND status = 'open' ORDER BY due_date ASC`,
       [String(memberId)]
     );
-    const tasks = this.db.resultSetToArray(taskRs);
+    const openTasks: object[] = this.db.resultSetToArray(taskRs);
 
     // 长期记忆
-    const memorySummary = member['memory_summary'] as string || '';
+    const memberObj = member as Record<string, object>;
+    const memorySummary: string = (memberObj['memory_summary'] as string) || '';
 
     return {
-      member,
-      recentMetrics: metrics,
-      abnormalMetrics: abnormal,
-      diagnoses,
-      medications,
-      openTasks: tasks,
-      memorySummary,
+      member: member,
+      recentMetrics: recentMetrics,
+      abnormalMetrics: abnormalMetrics,
+      diagnoses: diagnoses,
+      medications: medications,
+      openTasks: openTasks,
+      memorySummary: memorySummary,
     };
   }
 
   /**
    * 规则层扫描
    */
-  private scanRules(snapshot: HealthSnapshot): { critical: RuleAlert[]; abnormal: RuleAlert[] } {
-    const critical: RuleAlert[] = [];
-    const abnormal: RuleAlert[] = [];
-
-    for (const metric of snapshot.recentMetrics) {
-      const rule = CRITICAL_RULES.find(r => r.name === metric['metric_name']);
-      if (!rule) continue;
+  private scanRules(snapshot: HealthSnapshot, critical: RuleAlert[], abnormal: RuleAlert[]): void {
+    for (const metricObj of snapshot.recentMetrics) {
+      const metric = metricObj as Record<string, object>;
+      const metricName = metric['metric_name'] as string;
+      const rule: MetricRule | undefined = CRITICAL_RULES.find((r: MetricRule) => r.name === metricName);
+      if (!rule) {
+        continue;
+      }
 
       const value = metric['value'] as number;
-      if (value == null) continue;
+      if (value === null || value === undefined) {
+        continue;
+      }
 
       // 危急值
-      if ((rule.critical_high != null && value >= rule.critical_high) ||
-          (rule.critical_low != null && value <= rule.critical_low)) {
+      if ((rule.critical_high !== null && value >= rule.critical_high) ||
+          (rule.critical_low !== null && value <= rule.critical_low)) {
         critical.push({
-          metric_name: metric['metric_name'] as string,
-          value,
+          metric_name: metricName,
+          value: value,
           unit: rule.unit,
-          level: 'critical',
-          message: `${metric['metric_name']} ${value}${rule.unit} 达到危急值`,
+          level: 0,
+          message: `${metricName} ${value}${rule.unit} 达到危急值`,
         });
       }
       // 异常值
-      else if ((rule.abnormal_high != null && value >= rule.abnormal_high) ||
-               (rule.abnormal_low != null && value <= rule.abnormal_low)) {
+      else if ((rule.abnormal_high !== null && value >= rule.abnormal_high) ||
+               (rule.abnormal_low !== null && value <= rule.abnormal_low)) {
         abnormal.push({
-          metric_name: metric['metric_name'] as string,
-          value,
+          metric_name: metricName,
+          value: value,
           unit: rule.unit,
-          level: 'abnormal',
-          message: `${metric['metric_name']} ${value}${rule.unit} 偏高/偏低`,
+          level: 1,
+          message: `${metricName} ${value}${rule.unit} 偏高/偏低`,
         });
       }
     }
 
     // 到期待办
-    for (const task of snapshot.openTasks) {
-      const dueDate = task['due_date'] as string;
-      if (dueDate) {
-        const due = new Date(dueDate);
-        const now = new Date();
+    const now: Date = new Date();
+    for (const taskObj of snapshot.openTasks) {
+      const task = taskObj as Record<string, object>;
+      const dueDateStr = task['due_date'] as string;
+      if (dueDateStr) {
+        const due: Date = new Date(dueDateStr);
         if (due <= now) {
           abnormal.push({
             metric_name: 'task_due',
             value: 0,
             unit: '',
-            level: 'abnormal',
+            level: 1,
             message: `待办"${task['title']}"已到期`,
           });
         }
       }
     }
-
-    return { critical, abnormal };
   }
 
   /**
@@ -235,54 +255,43 @@ export class PatrolEngine {
   private async aiInference(
     snapshot: HealthSnapshot,
     abnormalAlerts: RuleAlert[],
+    memberId: number,
   ): Promise<PatrolResult> {
-    const patrolId = `patrol_${Date.now()}_${snapshot.member['id']}`;
-
-    // 构建画像摘要
-    const profileText = this.formatSnapshotForAI(snapshot, abnormalAlerts);
+    const patrolId: string = `patrol_${Date.now()}_${memberId}`;
+    const profileText: string = this.formatSnapshotForAI(snapshot, abnormalAlerts);
 
     const messages = [
-      {
-        role: 'system',
-        content: `你是一个主动健康管家。根据用户的健康画像，判断是否需要主动干预。
+      { role: 'system', content: `你是一个主动健康管家。根据用户的健康画像，判断是否需要主动干预。
 
 输出格式（严格 JSON）：
-{
-  "should_push": true/false,
-  "priority": "critical" | "high" | "normal" | "low",
-  "message": "主动消息内容（如果push）",
-  "tasks": [
-    {"title": "任务标题", "description": "描述", "category": "recheck", "urgency": "normal", "due_date": null}
-  ]
-}
+{"should_push": true/false, "priority": "critical|high|normal|low", "message": "主动消息内容", "tasks": []}
 
 判断原则：
 - 危急值 → critical，立即推送
 - 异常持续恶化 → high，每周最多1次
 - 待办到期 → normal，每天最多1次
 - 无异常 → low，不推送
-- 消息要口语化、关心式，不要像系统通知`,
-      },
-      {
-        role: 'user',
-        content: profileText,
-      },
+- 消息要口语化、关心式` },
+      { role: 'user', content: profileText },
     ];
 
     try {
       const response = await this.llm.chat(messages, undefined, 0.3, 800);
-      const result = JSON.parse(response.content);
-      
+      const result = JSON.parse(response.content) as Record<string, object>;
+      const shouldPush = (result['should_push'] as boolean) || false;
+      const message = (result['message'] as string) || '';
+      const priority = (result['priority'] as Priority) || 'low';
+      const tasks = (result['tasks'] as PatrolTask[]) || [];
+
       return {
-        should_push: result.should_push ?? false,
-        message: result.message ?? '',
-        priority: result.priority ?? 'low',
-        tasks: result.tasks ?? [],
+        should_push: shouldPush,
+        message: message,
+        priority: priority,
+        tasks: tasks,
         patrol_id: patrolId,
       };
     } catch (e) {
       console.error('[PatrolEngine] AI inference failed:', e);
-      // 规则兜底：有异常但不推
       return {
         should_push: false,
         message: '',
@@ -297,20 +306,34 @@ export class PatrolEngine {
    * 频率控制
    */
   private async checkFrequency(memberId: number, priority: Priority): Promise<boolean> {
-    if (priority === 'critical') return true;  // 危急不限
-    if (priority === 'low') return false;     // 低优先级不推
+    if (priority === 'critical') {
+      return true;
+    }
+    if (priority === 'low') {
+      return false;
+    }
 
-    const limit = FREQUENCY_LIMITS[priority] || 0;
-    if (limit === 0) return false;
+    let limit: number = 0;
+    let period: string = '';
+    if (priority === 'high') {
+      limit = 1;
+      period = '-7 days';
+    } else {
+      limit = 1;
+      period = '-1 days';
+    }
 
-    // 查询近期推送次数
-    const period = priority === 'high' ? "-7 days" : "-1 days";
+    if (limit === 0) {
+      return false;
+    }
+
     const rs = await this.db.query(
       `SELECT COUNT(*) as count FROM chat_messages WHERE member_id = ? AND source = 'proactive' AND created_at >= datetime('now', ?)`,
       [String(memberId), period]
     );
     const rows = this.db.resultSetToArray(rs);
-    const count = rows[0]?.['count'] as number || 0;
+    const countObj = rows[0] as Record<string, object>;
+    const count: number = (countObj['count'] as number) || 0;
 
     return count < limit;
   }
@@ -319,7 +342,7 @@ export class PatrolEngine {
    * 保存主动消息到数据库
    */
   async saveProactiveMessage(memberId: number, message: string, priority: Priority, patrolId: string): Promise<number> {
-    const metadata = JSON.stringify({ priority, patrol_id: patrolId });
+    const metadata: string = JSON.stringify({ priority: priority, patrol_id: patrolId });
     return await this.db.insert('chat_messages', {
       member_id: memberId,
       role: 'assistant',
@@ -336,7 +359,7 @@ export class PatrolEngine {
   async saveTasks(memberId: number, tasks: PatrolTask[]): Promise<number[]> {
     const taskIds: number[] = [];
     for (const task of tasks) {
-      const id = await this.db.insert('health_tasks', {
+      const id: number = await this.db.insert('health_tasks', {
         member_id: memberId,
         title: task.title,
         description: task.description,
@@ -357,35 +380,51 @@ export class PatrolEngine {
   // ============================================================
 
   private formatCriticalMessage(alerts: RuleAlert[]): string {
-    const lines = alerts.map(a => `🚨 ${a.message}`);
+    const lines: string[] = alerts.map((a: RuleAlert) => `🚨 ${a.message}`);
     return `${lines.join('\n')}\n\n这是危急值，请立即就医。`;
   }
 
   private formatSnapshotForAI(snapshot: HealthSnapshot, abnormalAlerts: RuleAlert[]): string {
-    const m = snapshot.member;
+    const m = snapshot.member as Record<string, object>;
     const parts: string[] = [];
 
-    parts.push(`成员：${m['name'] || '未知'}，${m['gender'] || ''}，${m['birth_date'] || ''}出生`);
-    
+    parts.push(`成员：${m['name'] || '未知'}`);
+
     if (snapshot.diagnoses.length > 0) {
-      parts.push(`诊断：${snapshot.diagnoses.map((d: Record<string, object>) => d['diagnosis_name']).join('、')}`);
+      const diagNames: string[] = snapshot.diagnoses.map((d: object) => {
+        return (d as Record<string, object>)['diagnosis_name'] as string;
+      });
+      parts.push(`诊断：${diagNames.join('、')}`);
     }
-    
+
     if (snapshot.medications.length > 0) {
-      parts.push(`用药：${snapshot.medications.map((med: Record<string, object>) => `${med['drug_name']} ${med['dosage']} ${med['frequency']}`).join('；')}`);
+      const medNames: string[] = snapshot.medications.map((med: object) => {
+        const mObj = med as Record<string, object>;
+        return `${mObj['drug_name']} ${mObj['dosage']} ${mObj['frequency']}`;
+      });
+      parts.push(`用药：${medNames.join('；')}`);
     }
 
     if (snapshot.recentMetrics.length > 0) {
-      const recent = snapshot.recentMetrics.slice(0, 10);
-      parts.push(`近期指标：${recent.map((mt: Record<string, object>) => `${mt['metric_name']}=${mt['value']}${mt['unit']}`).join('，')}`);
+      const metricCount = Math.min(10, snapshot.recentMetrics.length);
+      const recent: object[] = snapshot.recentMetrics.slice(0, metricCount);
+      const metricStrs: string[] = recent.map((mt: object) => {
+        const mObj = mt as Record<string, object>;
+        return `${mObj['metric_name']}=${mObj['value']}${mObj['unit']}`;
+      });
+      parts.push(`近期指标：${metricStrs.join('，')}`);
     }
 
     if (abnormalAlerts.length > 0) {
-      parts.push(`异常项：${abnormalAlerts.map(a => a.message).join('；')}`);
+      const alertMsgs: string[] = abnormalAlerts.map((a: RuleAlert) => a.message);
+      parts.push(`异常项：${alertMsgs.join('；')}`);
     }
 
     if (snapshot.openTasks.length > 0) {
-      parts.push(`待办：${snapshot.openTasks.map((t: Record<string, object>) => t['title']).join('、')}`);
+      const taskNames: string[] = snapshot.openTasks.map((t: object) => {
+        return (t as Record<string, object>)['title'] as string;
+      });
+      parts.push(`待办：${taskNames.join('、')}`);
     }
 
     if (snapshot.memorySummary) {
@@ -396,34 +435,17 @@ export class PatrolEngine {
   }
 
   private generateTasksFromAlerts(alerts: RuleAlert[], urgency: string): PatrolTask[] {
-    return alerts.map(a => ({
-      title: `${a.metric_name}复查`,
-      description: a.message,
-      category: 'recheck',
-      urgency: urgency,
-      due_date: new Date(Date.now() + 86400000).toISOString().split('T')[0], // 明天
-    }));
+    const tasks: PatrolTask[] = [];
+    const tomorrow: string = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    for (const a of alerts) {
+      tasks.push({
+        title: `${a.metric_name}复查`,
+        description: a.message,
+        category: 'recheck',
+        urgency: urgency,
+        due_date: tomorrow,
+      });
+    }
+    return tasks;
   }
-}
-
-// ============================================================
-// 内部类型
-// ============================================================
-
-interface HealthSnapshot {
-  member: Record<string, object>;
-  recentMetrics: Record<string, object>[];
-  abnormalMetrics: Record<string, object>[];
-  diagnoses: Record<string, object>[];
-  medications: Record<string, object>[];
-  openTasks: Record<string, object>[];
-  memorySummary: string;
-}
-
-interface RuleAlert {
-  metric_name: string;
-  value: number;
-  unit: string;
-  level: 'critical' | 'abnormal';
-  message: string;
 }

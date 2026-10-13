@@ -16,20 +16,36 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:app_icon",
+        "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:app_icon",
+        "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
           {
-            "entities": ["entity.system.home"],
-            "actions": ["action.system.home"]
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
           }
         ]
       }
     ],
     "extensionAbilities": [
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ],
+      },
       {
         "name": "PatrolWorkScheduler",
         "srcEntry": "./ets/services/PatrolWorkScheduler.ets",
@@ -49,14 +65,6 @@
       {
         "name": "ohos.permission.PUBLISH_AGENT_REMINDER",
         "reason": "$string:permission_reminder_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.NOTIFICATION_CONTROLLER",
-        "reason": "$string:permission_notification_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "always"

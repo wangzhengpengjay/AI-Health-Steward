@@ -2,7 +2,9 @@
  * LLM 客户端服务
  * 
  * 通过 HTTP 调用云端 LLM API（OpenAI 兼容格式）
- * 支持：对话、流式输出、工具调用
+ * 支持：对话、流式输出（回调）、工具调用
+ * 
+ * 注意：ArkTS 不支持 async generator，流式输出使用回调函数
  */
 
 import http from '@ohos.net.http';
@@ -24,69 +26,43 @@ export interface LLMConfig {
 // 工具定义（对齐后端 tool registry）
 // ============================================================
 
+export interface ToolParameter {
+  type: string;
+  description: string;
+}
+
+export interface ToolParameters {
+  type: string;
+  properties: Map<string, ToolParameter>;
+  required: string[];
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
-  parameters: Record<string, object>;
+  parameters: ToolParameters;
 }
 
-export const HEALTH_TOOLS: ToolDefinition[] = [
-  {
-    name: 'query_metrics',
-    description: '查询家庭成员的健康指标记录（如血压、血糖、血脂等）',
-    parameters: {
-      type: 'object',
-      properties: {
-        metric_name: { type: 'string', description: '指标名称，如 blood_pressure_systolic, glucose, total_cholesterol 等' },
-        limit: { type: 'integer', description: '返回最近N条记录，默认10' },
-      },
-    },
-  },
-  {
-    name: 'query_profile',
-    description: '查询家庭成员的诊断、用药、过敏、家族史等基本健康信息',
-    parameters: {
-      type: 'object',
-      properties: {
-        info_type: { type: 'string', description: '查询类型：diagnoses, medications, allergies, family_history, surgeries, vaccinations' },
-      },
-    },
-  },
-  {
-    name: 'query_abnormal',
-    description: '查询家庭成员的异常指标记录',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
-  },
-  {
-    name: 'extract_and_save',
-    description: '从用户消息中提取健康数据并保存（如血压、血糖等指标）',
-    parameters: {
-      type: 'object',
-      properties: {
-        metric_name: { type: 'string', description: '指标名称' },
-        value: { type: 'number', description: '数值' },
-        unit: { type: 'string', description: '单位' },
-        measured_at: { type: 'string', description: '测量时间，ISO格式' },
-        context: { type: 'string', description: '上下文，如 空腹/餐后' },
-      },
-      required: ['metric_name', 'value'],
-    },
-  },
-  {
-    name: 'assess_scale',
-    description: '调用健康量表评估（如 PHQ-9 抑郁、GAD-7 焦虑、糖尿病风险等）',
-    parameters: {
-      type: 'object',
-      properties: {
-        scale_code: { type: 'string', description: '量表代码：phq9, gad7, diabetes, ascvd, isi, hypertension, lipid, ad8, stroke' },
-      },
-      required: ['scale_code'],
-    },
-  },
-];
+// ============================================================
+// 消息构建辅助
+// ============================================================
+
+interface HttpMessage {
+  role: string;
+  content: string;
+  tool_calls?: object;
+  tool_call_id?: string;
+  name?: string;
+}
+
+interface ChatPayload {
+  model: string;
+  messages: HttpMessage[];
+  temperature: number;
+  max_tokens: number;
+  tools?: object[];
+  stream?: boolean;
+}
 
 // ============================================================
 // LLM 客户端
@@ -100,36 +76,60 @@ export class LLMClient {
   }
 
   /**
-   * 非流式对话
+   * 构建消息体
    */
-  async chat(
-    messages: LLMMessage[],
-    tools?: ToolDefinition[],
-    temperature?: number,
-    maxTokens?: number,
-  ): Promise<LLMResponse> {
-    const payload: Record<string, object> = {
-      model: this.config.model,
-      messages: messages.map(m => {
-        const msg: Record<string, object> = { role: m.role, content: m.content };
-        if (m.tool_calls) msg['tool_calls'] = m.tool_calls;
-        if (m.tool_call_id) msg['tool_call_id'] = m.tool_call_id;
-        if (m.name) msg['name'] = m.name;
-        return msg;
-      }),
-      temperature: temperature ?? this.config.temperature,
-      max_tokens: maxTokens ?? this.config.maxTokens,
-    };
+  private buildMessages(messages: LLMMessage[]): HttpMessage[] {
+    const result: HttpMessage[] = [];
+    for (const m of messages) {
+      const msg: HttpMessage = { role: m.role, content: m.content };
+      if (m.tool_calls) {
+        msg.tool_calls = m.tool_calls;
+      }
+      if (m.tool_call_id) {
+        msg.tool_call_id = m.tool_call_id;
+      }
+      if (m.name) {
+        msg.name = m.name;
+      }
+      result.push(msg);
+    }
+    return result;
+  }
 
-    if (tools && tools.length > 0) {
-      payload['tools'] = tools.map(t => ({
+  /**
+   * 构建工具列表
+   */
+  private buildTools(tools: ToolDefinition[]): object[] {
+    return tools.map((t: ToolDefinition) => {
+      return {
         type: 'function',
         function: {
           name: t.name,
           description: t.description,
           parameters: t.parameters,
         },
-      }));
+      };
+    });
+  }
+
+  /**
+   * 非流式对话
+   */
+  async chat(
+    messages: LLMMessage[],
+    tools: ToolDefinition[] | undefined,
+    temperature: number | undefined,
+    maxTokens: number | undefined,
+  ): Promise<LLMResponse> {
+    const payload: ChatPayload = {
+      model: this.config.model,
+      messages: this.buildMessages(messages),
+      temperature: temperature !== undefined ? temperature : this.config.temperature,
+      max_tokens: maxTokens !== undefined ? maxTokens : this.config.maxTokens,
+    };
+
+    if (tools && tools.length > 0) {
+      payload.tools = this.buildTools(tools);
     }
 
     const httpRequest = http.createHttp();
@@ -155,11 +155,16 @@ export class LLMClient {
 
       let toolCalls: LLMToolCall[] | null = null;
       if (message.tool_calls) {
-        toolCalls = message.tool_calls.map((tc: Record<string, object>) => ({
-          id: tc['id'],
-          name: tc['function']['name'],
-          arguments: tc['function']['arguments'],
-        }));
+        const rawCalls = message.tool_calls as object[];
+        toolCalls = rawCalls.map((tc: object) => {
+          const tcObj = tc as Record<string, string>;
+          const func = tcObj['function'] as Record<string, string>;
+          return {
+            id: tcObj['id'],
+            name: func['name'],
+            arguments: func['arguments'],
+          } as LLMToolCall;
+        });
       }
 
       return {
@@ -173,38 +178,26 @@ export class LLMClient {
   }
 
   /**
-   * 流式对话（SSE）
-   * 返回 AsyncGenerator，逐字 yield
+   * 流式对话（回调模式，因 ArkTS 不支持 async generator）
+   * @param onDelta 每收到一段文本时的回调
    */
-  async *chatStream(
+  async chatStream(
     messages: LLMMessage[],
-    tools?: ToolDefinition[],
-    temperature?: number,
-    maxTokens?: number,
-  ): AsyncGenerator<string> {
-    const payload: Record<string, object> = {
+    tools: ToolDefinition[] | undefined,
+    temperature: number | undefined,
+    maxTokens: number | undefined,
+    onDelta: (text: string) => void,
+  ): Promise<void> {
+    const payload: ChatPayload = {
       model: this.config.model,
-      messages: messages.map(m => {
-        const msg: Record<string, object> = { role: m.role, content: m.content };
-        if (m.tool_calls) msg['tool_calls'] = m.tool_calls;
-        if (m.tool_call_id) msg['tool_call_id'] = m.tool_call_id;
-        if (m.name) msg['name'] = m.name;
-        return msg;
-      }),
-      temperature: temperature ?? this.config.temperature,
-      max_tokens: maxTokens ?? this.config.maxTokens,
+      messages: this.buildMessages(messages),
+      temperature: temperature !== undefined ? temperature : this.config.temperature,
+      max_tokens: maxTokens !== undefined ? maxTokens : this.config.maxTokens,
       stream: true,
     };
 
     if (tools && tools.length > 0) {
-      payload['tools'] = tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      }));
+      payload.tools = this.buildTools(tools);
     }
 
     const httpRequest = http.createHttp();
@@ -227,16 +220,23 @@ export class LLMClient {
       // 解析 SSE 格式
       const lines = response.result.split('\n');
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
+        if (!line.startsWith('data: ')) {
+          continue;
+        }
         const data = line.slice(6);
-        if (data === '[DONE]') break;
+        if (data === '[DONE]') {
+          break;
+        }
         try {
           const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta;
-          if (delta?.content) {
-            yield delta.content;
+          const choices = parsed.choices as object[];
+          if (choices && choices.length > 0) {
+            const delta = (choices[0] as Record<string, object>)['delta'] as Record<string, string>;
+            if (delta && delta.content) {
+              onDelta(delta.content);
+            }
           }
-        } catch {
+        } catch (e) {
           // 忽略解析错误
         }
       }
@@ -248,7 +248,7 @@ export class LLMClient {
   /**
    * 轻量意图检测（max_tokens=50, temp=0）
    */
-  async detectIntent(userMessage: string): Promise<Record<string, object> | null> {
+  async detectIntent(userMessage: string): Promise<string | null> {
     const messages: LLMMessage[] = [
       {
         role: 'system',
@@ -258,10 +258,71 @@ export class LLMClient {
     ];
 
     const response = await this.chat(messages, undefined, 0, 50);
-    try {
-      return JSON.parse(response.content);
-    } catch {
-      return null;
-    }
+    return response.content;
   }
+}
+
+// ============================================================
+// 健康工具定义（对齐后端 tool registry）
+// ============================================================
+
+export function getHealthTools(): ToolDefinition[] {
+  return [
+    {
+      name: 'query_metrics',
+      description: '查询家庭成员的健康指标记录（如血压、血糖、血脂等）',
+      parameters: {
+        type: 'object',
+        properties: new Map<string, ToolParameter>([
+          ['metric_name', { type: 'string', description: '指标名称' }],
+          ['limit', { type: 'integer', description: '返回最近N条记录，默认10' }],
+        ]),
+        required: [],
+      },
+    },
+    {
+      name: 'query_profile',
+      description: '查询家庭成员的诊断、用药、过敏、家族史等基本健康信息',
+      parameters: {
+        type: 'object',
+        properties: new Map<string, ToolParameter>([
+          ['info_type', { type: 'string', description: '查询类型：diagnoses, medications, allergies' }],
+        ]),
+        required: [],
+      },
+    },
+    {
+      name: 'query_abnormal',
+      description: '查询家庭成员的异常指标记录',
+      parameters: {
+        type: 'object',
+        properties: new Map<string, ToolParameter>(),
+        required: [],
+      },
+    },
+    {
+      name: 'extract_and_save',
+      description: '从用户消息中提取健康数据并保存',
+      parameters: {
+        type: 'object',
+        properties: new Map<string, ToolParameter>([
+          ['metric_name', { type: 'string', description: '指标名称' }],
+          ['value', { type: 'number', description: '数值' }],
+          ['unit', { type: 'string', description: '单位' }],
+        ]),
+        required: ['metric_name', 'value'],
+      },
+    },
+    {
+      name: 'assess_scale',
+      description: '调用健康量表评估',
+      parameters: {
+        type: 'object',
+        properties: new Map<string, ToolParameter>([
+          ['scale_code', { type: 'string', description: '量表代码：phq9, gad7, diabetes等' }],
+        ]),
+        required: ['scale_code'],
+      },
+    },
+  ];
 }

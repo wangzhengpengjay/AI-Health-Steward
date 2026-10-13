@@ -14,7 +14,7 @@ import { ConsultationService } from '../services/ConsultationService';
 
 @Entry
 @Component
-struct ChatPage {
+struct Index {
   @State messages: ChatMessage[] = [];
   @State inputText: string = '';
   @State isStreaming: boolean = false;
