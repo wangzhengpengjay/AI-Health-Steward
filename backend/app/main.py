@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.database import async_session_factory
 from app.services.feishu import feishu_bot
 from app.services.summary_scheduler import scheduler_loop
+from app.services.patrol_engine import patrol_loop
 
 
 @asynccontextmanager
@@ -20,10 +21,17 @@ async def lifespan(app: FastAPI):
     asyncio.ensure_future(feishu_bot.start_all())
     # Periodic health-summary auto-generation (natural week/month/year first day)
     scheduler_task = asyncio.ensure_future(scheduler_loop(async_session_factory))
+    # V1.4: Proactive health patrol engine
+    patrol_task = asyncio.ensure_future(patrol_loop(async_session_factory))
     yield
     scheduler_task.cancel()
+    patrol_task.cancel()
     try:
         await scheduler_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await patrol_task
     except asyncio.CancelledError:
         pass
     await feishu_bot.stop_all()

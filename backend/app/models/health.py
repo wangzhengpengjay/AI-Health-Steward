@@ -320,7 +320,10 @@ class ChatMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # user / assistant
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str] = mapped_column(String(16), default="webui", nullable=False)  # webui / feishu
+    source: Mapped[str] = mapped_column(String(16), default="webui", nullable=False)  # webui / feishu / proactive
+    # V1.4: proactive agent — message type and metadata
+    message_type: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)  # normal / proactive / followup
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON: {patrol_id, task_ids, priority, ...}
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

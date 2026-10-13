@@ -72,6 +72,9 @@ class HistoryMessage(BaseModel):
     role: str
     content: str
     created_at: str
+    source: str = "webui"
+    message_type: str = "normal"
+    metadata: dict | None = None
 
 
 class ChatHistoryResponse(BaseModel):
@@ -136,7 +139,7 @@ async def chat_history(
     limit = min(limit, 200)  # hard cap
     stmt = (
         select(ChatMessage)
-        .where(ChatMessage.member_id == member_id, ChatMessage.source == "webui")
+        .where(ChatMessage.member_id == member_id, ChatMessage.source.in_("webui", "proactive"))
         .order_by(ChatMessage.id.desc())
         .limit(limit + 1)  # fetch one extra to check has_more
     )
@@ -154,6 +157,9 @@ async def chat_history(
             role=r.role,
             content=r.content,
             created_at=r.created_at.isoformat() if r.created_at else "",
+            source=r.source,
+            message_type=r.message_type if hasattr(r, 'message_type') else "normal",
+            metadata=json.loads(r.metadata_json) if hasattr(r, 'metadata_json') and r.metadata_json else None,
         )
         for r in rows
     ]

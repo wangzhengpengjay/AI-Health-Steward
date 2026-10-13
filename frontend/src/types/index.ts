@@ -155,6 +155,7 @@ export interface ToolCallRecord {
 }
 
 export interface ChatMessage {
+  id?: number
   role: 'user' | 'assistant'
   content: string
   timestamp: string
@@ -163,6 +164,10 @@ export interface ChatMessage {
   isHighRiskAlert?: boolean
   visit_intent?: boolean
   visit_complaint?: string
+  source?: string
+  message_type?: string
+  metadata?: Record<string, unknown> | null
+  isProactive?: boolean
 }
 
 export interface ChatResponse {

@@ -101,6 +101,9 @@ interface HistoryMessage {
   role: string
   content: string
   created_at: string
+  source?: string
+  message_type?: string
+  metadata?: Record<string, unknown> | null
 }
 
 interface ChatHistoryResponse {
@@ -187,6 +190,66 @@ export const chatApi = {
      }
     }
  },
+}
+
+// ---- Health Profile (diagnoses, medications, allergies) ----
+
+// ===== Proactive Agent API =====
+
+export interface ProactiveMessage {
+  id: number
+  content: string
+  priority: string
+  created_at: string
+  metadata: Record<string, unknown> | null
+  collected: boolean
+}
+
+export const proactiveApi = {
+  listMessages: async (memberId: number, limit = 20): Promise<ProactiveMessage[]> => {
+    const res = await fetch(`${BASE_URL}/members/${memberId}/proactive/messages?limit=${limit}`)
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+    const data = await res.json()
+    return data.messages ?? []
+  },
+
+  triggerPatrol: async (memberId: number, trigger = 'manual'): Promise<{
+    should_push: boolean
+    message?: string
+    priority?: string
+    task_updates?: unknown[]
+  }> => {
+    return request(`/members/${memberId}/proactive/patrol`, {
+      method: 'POST',
+      body: JSON.stringify({ trigger }),
+    })
+  },
+
+  reply: async (memberId: number, message: string): Promise<{
+    sufficient: boolean
+    followup: string | null
+    task_action: Record<string, unknown> | null
+    metrics_saved: number
+  }> => {
+    return request(`/members/${memberId}/proactive/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    })
+  },
+
+  dismiss: async (memberId: number, messageId: number): Promise<void> => {
+    await request(`/members/${memberId}/proactive/dismiss`, {
+      method: 'POST',
+      body: JSON.stringify({ message_id: messageId }),
+    })
+  },
+
+  postpone: async (memberId: number, messageId: number, days = 1): Promise<void> => {
+    await request(`/members/${memberId}/proactive/postpone`, {
+      method: 'POST',
+      body: JSON.stringify({ message_id: messageId, days }),
+    })
+  },
 }
 
 // ---- Health Profile (diagnoses, medications, allergies) ----

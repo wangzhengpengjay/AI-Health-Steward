@@ -19,11 +19,18 @@ interface ChatBubbleProps {
   message: ChatMessage
   isStreaming?: boolean
   onVisitPrep?: (complaint: string) => void
+  onProactiveReply?: (message: string) => void
+  onProactiveDismiss?: (messageId: number) => void
+  onProactivePostpone?: (messageId: number, days: number) => void
 }
 
-export default function ChatBubble({ message, isStreaming, onVisitPrep }: ChatBubbleProps) {
+export default function ChatBubble({ message, isStreaming, onVisitPrep, onProactiveReply, onProactiveDismiss, onProactivePostpone }: ChatBubbleProps) {
   const isUser = message.role === 'user'
   const risk = message.risk_level ? RISK_LABELS[message.risk_level] : null
+  const isProactive = message.isProactive
+  const proactiveMeta = message.metadata as { priority?: string; collected?: boolean; patrol_id?: string } | null
+  const isCollected = proactiveMeta?.collected === true
+  const priority = proactiveMeta?.priority || 'normal'
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
@@ -40,6 +47,28 @@ export default function ChatBubble({ message, isStreaming, onVisitPrep }: ChatBu
               }`
         }`}
       >
+        {/* Proactive message badge */}
+        {isProactive && !isUser && (
+          <div className={`mb-2 -mx-4 -mt-3 rounded-t-card px-4 py-1.5 text-sm font-medium flex items-center justify-between ${
+            priority === 'critical' ? 'bg-red-500 text-white'
+            : priority === 'high' ? 'bg-orange-400 text-white'
+            : 'bg-blue-400 text-white'
+          }`}>
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-rounded text-sm">notifications_active</span>
+              主动健康提醒
+              {priority === 'critical' && ' · 紧急'}
+              {priority === 'high' && ' · 重要'}
+            </span>
+            {isCollected && (
+              <span className="flex items-center gap-1 text-xs opacity-80">
+                <span className="material-symbols-rounded text-xs">check</span>
+                已处理
+              </span>
+            )}
+          </div>
+        )}
+
         {/* High-risk alert banner */}
         {message.isHighRiskAlert && (
           <div className="mb-2 -mx-4 -mt-3 rounded-t-card bg-red-500 px-4 py-1.5 text-sm font-medium text-white">
@@ -109,6 +138,37 @@ export default function ChatBubble({ message, isStreaming, onVisitPrep }: ChatBu
         <div className={`mt-1 text-xs ${isUser ? 'text-primary-disabled' : 'text-slate-400'}`}>
           {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </div>
+
+        {/* Proactive message action buttons */}
+        {isProactive && !isUser && !isStreaming && !isCollected && onProactiveReply && message.id != null && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              onClick={() => onProactiveReply(message.content)}
+              className="flex items-center gap-1 rounded-field bg-primary px-3 py-1.5 text-xs text-white transition hover:bg-primary-hover"
+            >
+              <span className="material-symbols-rounded text-sm">reply</span>
+              回复
+            </button>
+            {onProactivePostpone && (
+              <button
+                onClick={() => message.id != null && onProactivePostpone(message.id, 1)}
+                className="flex items-center gap-1 rounded-field border border-slate-200 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+              >
+                <span className="material-symbols-rounded text-sm">schedule</span>
+                明天再说
+              </button>
+            )}
+            {onProactiveDismiss && (
+              <button
+                onClick={() => message.id != null && onProactiveDismiss(message.id)}
+                className="flex items-center gap-1 rounded-field border border-slate-200 px-3 py-1.5 text-xs text-slate-400 transition hover:bg-slate-50"
+              >
+                <span className="material-symbols-rounded text-sm">close</span>
+                忽略
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

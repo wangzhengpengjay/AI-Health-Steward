@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useMemberStore } from '@/stores/memberStore'
 import { useChatStore } from '@/stores/chatStore'
-import { chatApi, type ReportRecord } from '@/lib/api'
+import { chatApi, type ReportRecord, proactiveApi } from '@/lib/api'
 import type { ChatMessage } from '@/types'
 import ChatBubble from '@/components/ChatBubble'
 import ReportConfirmModal from '@/components/ReportConfirmModal'
@@ -35,6 +35,8 @@ export default function Chat() {
   const [showReportModal, setShowReportModal] = useState(false)
   const [showVisitPrep, setShowVisitPrep] = useState(false)
   const [visitPrepComplaint, setVisitPrepComplaint] = useState('')
+  const [proactiveReplyTarget, setProactiveReplyTarget] = useState<string | null>(null)
+  void proactiveReplyTarget
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -52,9 +54,14 @@ export default function Chat() {
       .then(({ messages }) => {
         if (cancelled) return
         const restored: ChatMessage[] = messages.map((h) => ({
+          id: h.id,
           role: h.role as 'user' | 'assistant',
           content: h.content,
           timestamp: h.created_at || new Date().toISOString(),
+          source: h.source,
+          message_type: h.message_type,
+          metadata: h.metadata,
+          isProactive: h.source === 'proactive',
         }))
         setHistory(id, restored)
       })
@@ -251,6 +258,57 @@ export default function Chat() {
     }
   }
 
+  const handleProactiveReply = (content: string) => {
+    setProactiveReplyTarget(content)
+    setInput('')
+  }
+
+  const handleProactiveDismiss = async (messageId: number) => {
+    if (!memberId) return
+    try {
+      await proactiveApi.dismiss(memberId, messageId)
+      if (memberId != null) {
+        chatApi.getHistory(memberId).then(({ messages }) => {
+          const restored: ChatMessage[] = messages.map((h) => ({
+            role: h.role as 'user' | 'assistant',
+            content: h.content,
+            timestamp: h.created_at || new Date().toISOString(),
+            source: h.source,
+            message_type: h.message_type,
+            metadata: h.metadata,
+            isProactive: h.source === 'proactive',
+          }))
+          setHistory(memberId, restored)
+        })
+      }
+    } catch (err) {
+      console.error('Failed to dismiss proactive message:', err)
+    }
+  }
+
+  const handleProactivePostpone = async (messageId: number, days: number) => {
+    if (!memberId) return
+    try {
+      await proactiveApi.postpone(memberId, messageId, days)
+      if (memberId != null) {
+        chatApi.getHistory(memberId).then(({ messages }) => {
+          const restored: ChatMessage[] = messages.map((h) => ({
+            role: h.role as 'user' | 'assistant',
+            content: h.content,
+            timestamp: h.created_at || new Date().toISOString(),
+            source: h.source,
+            message_type: h.message_type,
+            metadata: h.metadata,
+            isProactive: h.source === 'proactive',
+          }))
+          setHistory(memberId, restored)
+        })
+      }
+    } catch (err) {
+      console.error('Failed to postpone proactive message:', err)
+    }
+  }
+
   if (!currentMemberId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -308,6 +366,9 @@ export default function Chat() {
             key={i}
             message={msg}
             onVisitPrep={(complaint) => { setVisitPrepComplaint(complaint); setShowVisitPrep(true) }}
+            onProactiveReply={handleProactiveReply}
+            onProactiveDismiss={handleProactiveDismiss}
+            onProactivePostpone={handleProactivePostpone}
           />
         ))}
 
