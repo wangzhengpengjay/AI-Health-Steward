@@ -41,4 +41,7 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Auto-run database migrations on startup, then start the server.
+# This ensures tables are created before the app accepts requests,
+# so users don't need to manually run `alembic upgrade head`.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

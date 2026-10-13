@@ -48,18 +48,27 @@ cp .env.example .env
 # 4. 同步配置到 backend/.env（Docker 挂载使用此文件）
 cp .env backend/.env
 
-# 5. 构建镜像（首次部署）
+# 5. 创建用户数据目录（存放上传的报告等）
+mkdir -p userdata
+
+# 6. 构建镜像（首次部署）
 docker compose -f docker-compose.prod.yml build
 
-# 6. 启动（无热重载，低 CPU）
+# 7. 启动（无热重载，低 CPU）
+#    后端启动时会自动执行数据库迁移（alembic upgrade head），无需手动操作。
 docker compose -f docker-compose.prod.yml up -d
-
-# 7. 初始化数据库（首次部署）
-docker exec health-steward-backend alembic upgrade head
 
 # 8. 访问
 # WebUI:  http://localhost:5173
 # API 文档: http://localhost:8000/docs
+#
+# ⚠️ 若修改了 VITE_PROXY_TARGET 或前端代码，需重新构建前端镜像：
+#    docker compose -f docker-compose.prod.yml build frontend
+#    docker compose -f docker-compose.prod.yml up -d frontend
+#
+# ⚠️ 端口冲突处理（如群晖 NAS 自带 PostgreSQL 占用 5432）：
+#    修改 docker-compose.prod.yml 中 ports 映射，如 "5433:5432"
+#    注意：DATABASE_URL 中仍使用容器内端口 5432，不需要修改
 ```
 
 > 生产版后端不挂载源码，使用镜像内打包的代码；前端使用 `vite preview` 提供生产构建产物。空闲时 CPU 占用接近 0%，适合长期运行。
@@ -77,11 +86,12 @@ cp .env.example .env
 
 cp .env backend/.env
 
-# 3. 一键启动（热重载）
-docker compose up -d
+# 3. 创建用户数据目录
+mkdir -p userdata
 
-# 4. 初始化数据库（首次部署）
-docker exec health-steward-backend alembic upgrade head
+# 4. 一键启动（热重载）
+#    后端启动时会自动执行数据库迁移（alembic upgrade head），无需手动操作。
+docker compose up -d
 
 # 5. 访问
 # WebUI: http://localhost:5173

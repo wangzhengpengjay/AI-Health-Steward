@@ -35,7 +35,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-health}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-health} -d ${POSTGRES_DB:-health_steward}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -78,6 +78,11 @@ services:
     container_name: health-steward-frontend
     ports:
       - "5173:5173"
+    environment:
+      # Inside the compose network the backend is reachable by service name.
+      # Without this, vite.config.ts defaults to 127.0.0.1:8000 which points
+      # to the frontend container itself, causing ECONNREFUSED.
+      VITE_PROXY_TARGET: "http://backend:8000"
     depends_on:
       - backend
     # No `command` override: serves the pre-built bundle via `vite preview`
