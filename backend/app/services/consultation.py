@@ -142,6 +142,31 @@ _A_LEVEL_REPLY_KEYWORDS = [
 ]
 
 
+# Markers that indicate the model emitted raw tool-call markup in the
+# content field instead of using the standard tool_calls response format.
+# This happens with some providers (e.g. iFlytek xopdeepseekv4pro) that do
+# not fully support the OpenAI tool-calling spec.
+_RAW_TOOL_CALL_MARKERS = [
+    "<｜｜DSML｜｜",     # iFlytek spark deepseek
+    "<｜｜DSML｜｜calls>",
+    "<function_calls>",
+    "<tool_call>",
+    "<invoke",
+    "<function_call>",
+]
+
+
+def _looks_like_raw_tool_call(content: str) -> bool:
+    """Check if the content looks like raw tool-call markup rather than a normal reply."""
+    if not content:
+        return False
+    # If the content is short and dominated by tool-call markup, it's a raw call
+    for marker in _RAW_TOOL_CALL_MARKERS:
+        if marker in content:
+            return True
+    return False
+
+
 class ConsultationService:
     """Orchestrates the model provider and health tools for a consultation."""
 
@@ -205,6 +230,13 @@ class ConsultationService:
 
             if not response.tool_calls:
                 reply = response.content or ""
+                # Some models (e.g. xopdeepseekv4pro) don't support standard
+                # tool_calls and instead emit raw tool-call markup in content.
+                # Detect this and retry without tools to get a clean text reply.
+                if _looks_like_raw_tool_call(reply):
+                    logger.warning("Model returned raw tool-call markup in content, retrying without tools")
+                    response = await provider.chat(messages, tools=None)
+                    reply = response.content or ""
                 risk_level = self._assess_risk(user_message, reply)
                 await self._save_message(member_id, "assistant", reply, source)
                 await self._after_turn(member_id, source)
@@ -276,6 +308,11 @@ class ConsultationService:
             )
 
             if not response.tool_calls:
+                # Some models emit raw tool-call markup in content instead of
+                # using the standard tool_calls field. Detect and retry without tools.
+                if _looks_like_raw_tool_call(response.content or ""):
+                    logger.warning("Model returned raw tool-call markup in stream content, retrying without tools")
+                    response = await provider.chat(messages, tools=None)
                 full_reply: list[str] = []
                 async for delta in await provider.chat(messages, tools=None, stream=True):
                     full_reply.append(delta)
