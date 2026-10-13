@@ -229,7 +229,7 @@ export default function Chat() {
         content: fullContent || '(空回复)',
         timestamp: new Date().toISOString(),
         risk_level: riskLevel,
-        isHighRiskAlert: riskLevel === 'S',
+        isHighRiskAlert: riskLevel === 'S' || riskLevel === 'A',
         tool_calls: toolCalls,
         visit_intent: visitIntent?.visit_intent ?? false,
         visit_complaint: visitIntent?.complaint,
