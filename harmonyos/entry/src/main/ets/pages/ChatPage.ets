@@ -15,6 +15,9 @@
 
 import { ChatMessage, RiskLevel } from '../models/HealthModels';
 import { ConsultationService } from '../services/ConsultationService';
+import { DatabaseService } from '../services/DatabaseService';
+import { LLMClient, LLMConfig } from '../services/LLMClient';
+import common from '@ohos.app.ability.common';
 
 interface ToolCallLabel {
   key: string;
@@ -38,14 +41,37 @@ struct Index {
   private scroller: Scroller = new Scroller();
 
   aboutToAppear() {
-    this.loadHistory();
+    this.initServices();
+  }
+
+  private async initServices(): Promise<void> {
+    try {
+      const context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+      const db: DatabaseService = DatabaseService.getInstance(context);
+      await db.init();
+
+      // TODO: 实际应从安全存储中读取 API Key
+      const config: LLMConfig = {
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'YOUR_API_KEY_HERE',
+        model: 'deepseek-flash',
+        temperature: 0.7,
+        maxTokens: 4096,
+      };
+      const llm: LLMClient = new LLMClient(config);
+      this.consultationService = new ConsultationService(db, llm);
+
+      await this.loadHistory();
+    } catch (e) {
+      this.error = `初始化失败: ${e}`;
+    }
   }
 
   async loadHistory(): Promise<void> {
     if (!this.consultationService) {
       return;
     }
-    // 从数据库加载历史消息
+    // TODO: 从数据库加载历史消息
   }
 
   async sendMessage(): Promise<void> {
