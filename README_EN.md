@@ -90,7 +90,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 # 6. Access
 # WebUI: http://localhost:5173
-# API Docs: http://localhost:8000/docs
+# API Docs: http://localhost:18000/docs
 ```
 
 ### For Developers (Development, hot-reload)
@@ -106,7 +106,7 @@ docker compose up -d
 
 # 5. Access
 # WebUI: http://localhost:5173
-# API Docs: http://localhost:8000/docs
+# API Docs: http://localhost:18000/docs
 ```
 
 > Both modes share the same database and user data. See [Deployment Guide](DEPLOYMENT.md) for details.

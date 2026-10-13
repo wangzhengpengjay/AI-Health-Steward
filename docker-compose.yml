@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-health}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -30,7 +30,7 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
       USERDATA_DIR: "/app/userdata"
     ports:
-      - "8000:8000"
+      - "18000:8000"
     # Lets the container reach services running on the host (e.g. Ollama).
     # Without this, `host.docker.internal` does not resolve on plain Linux, so
     # LOCAL_LLM_BASE=http://host.docker.internal:11434/v1 cannot work there.

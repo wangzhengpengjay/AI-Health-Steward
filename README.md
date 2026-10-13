@@ -105,7 +105,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 # 6. 访问
 # WebUI: http://localhost:5173
-# API 文档: http://localhost:8000/docs
+# API 文档: http://localhost:18000/docs
 ```
 
 ### 开发者部署（开发版，改代码即时生效）
@@ -121,7 +121,7 @@ docker compose up -d
 
 # 5. 访问
 # WebUI: http://localhost:5173
-# API 文档: http://localhost:8000/docs
+# API 文档: http://localhost:18000/docs
 ```
 
 > 两种模式共享数据库和用户数据，可随时切换。详见[部署指南](DEPLOYMENT.md)。

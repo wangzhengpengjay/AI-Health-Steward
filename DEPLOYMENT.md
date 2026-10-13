@@ -60,7 +60,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 # 8. 访问
 # WebUI:  http://localhost:5173
-# API 文档: http://localhost:8000/docs
+# API 文档: http://localhost:18000/docs
 #
 # ⚠️ 若修改了 VITE_PROXY_TARGET 或前端代码，需重新构建前端镜像：
 #    docker compose -f docker-compose.prod.yml build frontend
@@ -95,7 +95,7 @@ docker compose up -d
 
 # 5. 访问
 # WebUI: http://localhost:5173
-# API 文档: http://localhost:8000/docs
+# API 文档: http://localhost:18000/docs
 ```
 
 > 开发版挂载宿主机源码到容器，改后端 Python 代码自动重载，改前端 TSX 代码 HMR 即时更新。
