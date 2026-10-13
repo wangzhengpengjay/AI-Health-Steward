@@ -81,9 +81,12 @@ export default function Chat() {
     }
   }, [currentMemberId])
 
+  // Auto-scroll to bottom on new messages or streaming content.
+  // Use 'auto' (instant) during streaming to avoid smooth-scroll animation
+  // conflicts that cause janky, jumpy rendering.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, streamingContent])
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: isStreaming ? 'auto' : 'smooth' })
+  }, [messages, streamingContent, isStreaming])
 
   // Prefill input when navigating from AssessResult with scale context
   useEffect(() => {
