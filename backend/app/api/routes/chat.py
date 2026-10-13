@@ -139,7 +139,7 @@ async def chat_history(
     limit = min(limit, 200)  # hard cap
     stmt = (
         select(ChatMessage)
-        .where(ChatMessage.member_id == member_id, ChatMessage.source.in_("webui", "proactive"))
+        .where(ChatMessage.member_id == member_id, ChatMessage.source.in_(["webui", "proactive"]))
         .order_by(ChatMessage.id.desc())
         .limit(limit + 1)  # fetch one extra to check has_more
     )
