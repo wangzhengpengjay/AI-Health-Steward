@@ -2,23 +2,22 @@
  * 健康管家数据模型 — 对齐后端 PostgreSQL schema
  * 
  * 所有模型使用 ArkData RDB (SQLite) 存储，SQL 语法与 PostgreSQL 基本兼容
+ * 
+ * ArkTS 限制：
+ * - 不支持 Record<K,V>，使用 Map<K,V> 或直接定义 interface
+ * - 不支持 object 作为类型，需要显式 interface
  */
 
 // ============================================================
 // 基础类型
 // ============================================================
 
-/** 风险级别 */
 export type RiskLevel = 'S' | 'A' | 'B';
-
-/** 消息来源 */
 export type MessageSource = 'webui' | 'proactive' | 'system';
-
-/** 消息类型 */
 export type MessageType = 'normal' | 'proactive' | 'followup';
-
-/** 优先级 */
 export type Priority = 'critical' | 'high' | 'normal' | 'low';
+export type TaskCategory = 'recheck' | 'medication' | 'lifestyle' | 'visit' | 'other';
+export type TaskUrgency = 'critical' | 'urgent' | 'normal' | 'low';
 
 // ============================================================
 // 家庭成员
@@ -27,16 +26,15 @@ export type Priority = 'critical' | 'high' | 'normal' | 'low';
 export interface FamilyMember {
   id: number;
   name: string;
-  gender: string;        // 'male' | 'female'
-  birth_date: string;    // ISO date
-  height: number;        // cm
-  weight: number;        // kg
-  bmi: number;           // 自动计算
-  blood_type: string;    // A/B/AB/O + Rh+/-
-  relationship: string;  // self/parent/child/spouse/other
+  gender: string;
+  birth_date: string;
+  height: number;
+  weight: number;
+  bmi: number;
+  blood_type: string;
+  relationship: string;
   region: string;
   occupation: string;
-  // 健康标记
   is_pregnant: boolean;
   is_preparing_pregnancy: boolean;
   has_sexual_history: boolean;
@@ -51,7 +49,6 @@ export interface FamilyMember {
   has_heart_failure: boolean;
   created_at: string;
   updated_at: string;
-  // 长期记忆摘要
   memory_summary: string | null;
   memory_summary_updated_at: string | null;
 }
@@ -63,22 +60,22 @@ export interface FamilyMember {
 export interface MetricRecord {
   id: number;
   member_id: number;
-  metric_name: string;     // blood_pressure_systolic, blood_pressure_diastolic, glucose, etc.
+  metric_name: string;
   value: number | null;
-  text_value: string | null;  // 文本型值 (如 "阴性")
+  text_value: string | null;
   unit: string;
   reference_lower: number | null;
   reference_upper: number | null;
   is_abnormal: boolean;
   is_critical: boolean;
-  measured_at: string;     // ISO datetime
-  context: string | null;  // 空腹/餐后/等
-  source_type: string;     // 'manual' | 'chat_extract' | 'report'
+  measured_at: string;
+  context: string | null;
+  source_type: string;
   created_at: string;
 }
 
 // ============================================================
-// 诊断记录
+// 诊断/用药/过敏/生活方式/家族史/手术/疫苗
 // ============================================================
 
 export interface Diagnosis {
@@ -91,68 +88,48 @@ export interface Diagnosis {
   created_at: string;
 }
 
-// ============================================================
-// 用药记录
-// ============================================================
-
 export interface Medication {
   id: number;
   member_id: number;
   drug_name: string;
   generic_name: string | null;
-  dosage: string;           // "5mg"
-  frequency: string;        // "每日一次"
-  route: string | null;     // "口服"
+  dosage: string;
+  frequency: string;
+  route: string | null;
   start_date: string;
   end_date: string | null;
   diagnosis_id: number | null;
   created_at: string;
 }
 
-// ============================================================
-// 过敏记录
-// ============================================================
-
 export interface Allergy {
   id: number;
   member_id: number;
-  type: string;             // 'drug' | 'food' | 'environmental'
+  type: string;
   name: string;
-  severity: string | null;  // 'mild' | 'moderate' | 'severe'
+  severity: string | null;
   recorded_at: string;
   created_at: string;
 }
 
-// ============================================================
-// 生活方式
-// ============================================================
-
 export interface Lifestyle {
   id: number;
   member_id: number;
-  category: string;         // 'smoking' | 'drinking' | 'exercise' | 'sleep' | 'diet'
-  status: string;            // 'current' | 'quit' | 'never' | 'occasional'
+  category: string;
+  status: string;
   frequency: string | null;
   recorded_at: string;
   created_at: string;
 }
 
-// ============================================================
-// 家族史
-// ============================================================
-
 export interface FamilyHistory {
   id: number;
   member_id: number;
-  relation: string;          // 'father' | 'mother' | 'sibling' | etc.
+  relation: string;
   disease_name: string;
   recorded_at: string;
   created_at: string;
 }
-
-// ============================================================
-// 手术记录
-// ============================================================
 
 export interface Surgery {
   id: number;
@@ -163,10 +140,6 @@ export interface Surgery {
   notes: string | null;
   created_at: string;
 }
-
-// ============================================================
-// 疫苗接种
-// ============================================================
 
 export interface Vaccination {
   id: number;
@@ -182,23 +155,25 @@ export interface Vaccination {
 // 聊天消息
 // ============================================================
 
+export interface ChatMessageMetadata {
+  tool_calls?: string[];
+  risk_level?: string;
+}
+
 export interface ChatMessage {
   id: number;
   member_id: number;
-  role: string;              // 'user' | 'assistant'
+  role: string;
   content: string;
   source: MessageSource;
   message_type: MessageType;
-  metadata: Record<string, object> | null;  // JSON metadata
+  metadata: ChatMessageMetadata | null;
   created_at: string;
 }
 
 // ============================================================
 // 健康任务
 // ============================================================
-
-export type TaskCategory = 'recheck' | 'medication' | 'lifestyle' | 'visit' | 'other';
-export type TaskUrgency = 'critical' | 'urgent' | 'normal' | 'low';
 
 export interface HealthTask {
   id: number;
@@ -208,8 +183,8 @@ export interface HealthTask {
   category: TaskCategory;
   urgency: TaskUrgency;
   due_date: string | null;
-  status: string;            // 'open' | 'completed' | 'dismissed'
-  source: string;            // 'metric' | 'diagnosis' | 'manual' | 'proactive'
+  status: string;
+  source: string;
   source_ref: string | null;
   auto_generated: boolean;
   completed_at: string | null;
@@ -220,7 +195,7 @@ export interface HealthTask {
 }
 
 // ============================================================
-// 体检报告
+// 体检报告 / 健康小结
 // ============================================================
 
 export interface CheckupReport {
@@ -231,19 +206,15 @@ export interface CheckupReport {
   report_type: string | null;
   raw_text: string | null;
   extraction_json: string | null;
-  status: string;            // 'pending' | 'processing' | 'completed' | 'failed'
+  status: string;
   created_at: string;
   updated_at: string;
 }
 
-// ============================================================
-// 健康小结
-// ============================================================
-
 export interface HealthSummary {
   id: number;
   member_id: number;
-  period: string;            // 'weekly' | 'monthly' | 'yearly'
+  period: string;
   period_start: string;
   period_end: string;
   content: string;
@@ -251,7 +222,7 @@ export interface HealthSummary {
 }
 
 // ============================================================
-// 主动巡检结果
+// 主动巡检
 // ============================================================
 
 export interface PatrolResult {
@@ -271,13 +242,24 @@ export interface PatrolTask {
 }
 
 // ============================================================
-// LLM 对话消息（发送给云端 LLM 的格式）
+// LLM 对话
 // ============================================================
 
+export interface LLMToolCallFunction {
+  name: string;
+  arguments: string;
+}
+
+export interface LLMToolCall {
+  id: string;
+  type: string;
+  function: LLMToolCallFunction;
+}
+
 export interface LLMMessage {
-  role: string;              // 'system' | 'user' | 'assistant' | 'tool'
+  role: string;
   content: string;
-  tool_calls?: object[];
+  tool_calls?: LLMToolCall[];
   tool_call_id?: string;
   name?: string;
 }
@@ -288,14 +270,8 @@ export interface LLMResponse {
   finish_reason: string;
 }
 
-export interface LLMToolCall {
-  id: string;
-  name: string;
-  arguments: string;         // JSON string
-}
-
 // ============================================================
-// 代理提醒（Reminder Agent）
+// 代理提醒
 // ============================================================
 
 export interface ReminderInfo {

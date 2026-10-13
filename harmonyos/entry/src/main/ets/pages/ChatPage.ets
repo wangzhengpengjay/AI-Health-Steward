@@ -4,13 +4,22 @@
  * 功能：
  * - 显示对话历史（用户 + AI + 主动消息）
  * - 流式输出 AI 回复
- * - 主动消息标记 + 操作按钮（回复/推迟/忽略）
+ * - 主动消息标记 + 操作按钮
  * - 风险级别标识
- * - 指标录入
+ * 
+ * ArkTS 限制：
+ * - 不支持 for await → 使用回调函数
+ * - 不支持 Record<K,V> → 使用 Map 或 interface
+ * - border 不支持嵌套对象 → 使用 BorderOptions 接口
  */
 
-import { ChatMessage, RiskLevel, Priority } from '../models/HealthModels';
+import { ChatMessage, RiskLevel } from '../models/HealthModels';
 import { ConsultationService } from '../services/ConsultationService';
+
+interface ToolCallLabel {
+  key: string;
+  label: string;
+}
 
 @Entry
 @Component
@@ -29,21 +38,21 @@ struct Index {
   private scroller: Scroller = new Scroller();
 
   aboutToAppear() {
-    // 初始化服务（实际使用时从 Ability 传入 context）
-    // this.consultationService = new ConsultationService(db, llm);
     this.loadHistory();
   }
 
-  async loadHistory() {
-    if (!this.consultationService) return;
+  async loadHistory(): Promise<void> {
+    if (!this.consultationService) {
+      return;
+    }
     // 从数据库加载历史消息
-    // const history = await this.consultationService.getHistory(this.currentMemberId, 50);
-    // this.messages = history;
   }
 
-  async sendMessage() {
-    const text = this.inputText.trim();
-    if (!text || this.isStreaming || !this.consultationService) return;
+  async sendMessage(): Promise<void> {
+    const text: string = this.inputText.trim();
+    if (!text || this.isStreaming || !this.consultationService) {
+      return;
+    }
 
     this.inputText = '';
     this.isStreaming = true;
@@ -53,7 +62,6 @@ struct Index {
     this.isHighRiskAlert = false;
     this.toolCallBadges = [];
 
-    // 添加用户消息
     const userMsg: ChatMessage = {
       id: 0,
       member_id: this.currentMemberId,
@@ -67,33 +75,43 @@ struct Index {
     this.messages.push(userMsg);
 
     try {
-      let fullContent = '';
-      
-      // 流式输出
-      for await (const chunk of this.consultationService.chatStream(this.currentMemberId, text)) {
-        if (chunk.type === 'delta') {
-          fullContent += chunk.data;
-          this.streamingContent = fullContent;
-        } else if (chunk.type === 'risk') {
-          const riskData = JSON.parse(chunk.data);
-          this.currentRiskLevel = riskData.risk_level;
-          this.isHighRiskAlert = riskData.risk_level === 'S' || riskData.risk_level === 'A';
-          if (riskData.tool_calls) {
-            this.toolCallBadges = riskData.tool_calls.map((tc: Record<string, object>) => {
-              const labels: Record<string, string> = {
-                query_metrics: '已查询健康指标',
-                query_profile: '已查询诊断/用药',
-                query_abnormal: '已查询异常指标',
-                extract_and_save: '已记录健康数据',
-                assess_scale: '已调用量表',
-              };
-              return labels[tc['name'] as string] || tc['name'] as string;
-            });
-          }
-        }
-      }
+      let fullContent: string = '';
 
-      // 添加 AI 消息
+      await this.consultationService.chatStream(
+        this.currentMemberId,
+        text,
+        'webui',
+        (delta: string) => {
+          fullContent += delta;
+          this.streamingContent = fullContent;
+        },
+        (riskLevel: RiskLevel, toolCallNames: string[]) => {
+          this.currentRiskLevel = riskLevel;
+          this.isHighRiskAlert = riskLevel === 'S' || riskLevel === 'A';
+
+          const labels: ToolCallLabel[] = [
+            { key: 'query_metrics', label: '已查询健康指标' },
+            { key: 'query_profile', label: '已查询诊断/用药' },
+            { key: 'query_abnormal', label: '已查询异常指标' },
+            { key: 'extract_and_save', label: '已记录健康数据' },
+            { key: 'assess_scale', label: '已调用量表' },
+          ];
+
+          const badges: string[] = [];
+          for (const name of toolCallNames) {
+            let found: string = name;
+            for (const l of labels) {
+              if (l.key === name) {
+                found = l.label;
+                break;
+              }
+            }
+            badges.push(found);
+          }
+          this.toolCallBadges = badges;
+        },
+      );
+
       const aiMsg: ChatMessage = {
         id: 0,
         member_id: this.currentMemberId,
@@ -124,14 +142,15 @@ struct Index {
         Blank()
         Text(this.currentRiskLevel ? `风险: ${this.currentRiskLevel}` : '')
           .fontSize(12)
-          .fontColor(this.currentRiskLevel === 'S' ? '#dc2626' : 
+          .fontColor(this.currentRiskLevel === 'S' ? '#dc2626' :
                      this.currentRiskLevel === 'A' ? '#d97706' : '#16a34a')
       }
       .width('100%')
       .height(56)
       .padding({ left: 16, right: 16 })
       .backgroundColor('#ffffff')
-      .border({ bottom: { width: 1, color: '#e2e8f0' } })
+      .borderWidth({ bottom: 1 })
+      .borderColor('#e2e8f0')
 
       // 高风险横幅
       if (this.isHighRiskAlert) {
@@ -155,15 +174,13 @@ struct Index {
           }
         })
 
-        // 流式输出中的消息
         if (this.isStreaming) {
           ListItem() {
             this.StreamingBubble()
           }
         }
 
-        // 错误提示
-        if (this.error) {
+        if (this.error.length > 0) {
           ListItem() {
             Row() {
               Text(this.error)
@@ -210,7 +227,8 @@ struct Index {
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       .backgroundColor('#ffffff')
-      .border({ top: { width: 1, color: '#e2e8f0' } })
+      .borderWidth({ top: 1 })
+      .borderColor('#e2e8f0')
     }
     .width('100%')
     .height('100%')
@@ -220,7 +238,6 @@ struct Index {
   @Builder
   MessageBubble(msg: ChatMessage) {
     if (msg.role === 'user') {
-      // 用户消息：右对齐
       Row() {
         Column() {
           Text(msg.content)
@@ -236,10 +253,8 @@ struct Index {
       .justifyContent(FlexAlign.End)
       .margin({ bottom: 12 })
     } else {
-      // AI 消息：左对齐
       Row() {
         Column() {
-          // 主动消息标记
           if (msg.source === 'proactive') {
             Row() {
               Text('🔔 主动健康提醒')
@@ -252,21 +267,15 @@ struct Index {
             .margin({ bottom: 8 })
           }
 
-          // 工具调用徽章
-          if (msg.metadata && (msg.metadata as Record<string, object>)['tool_calls']) {
-            // TODO: 显示工具调用徽章
-          }
-
-          // 消息内容
           Text(msg.content)
             .fontSize(15)
             .fontColor('#1e293b')
             .padding(12)
             .borderRadius(12)
             .backgroundColor('#ffffff')
-            .border({ width: 1, color: '#e2e8f0' })
+            .borderWidth(1)
+            .borderColor('#e2e8f0')
 
-          // 时间
           Text(this.formatTime(msg.created_at))
             .fontSize(11)
             .fontColor('#94a3b8')
@@ -284,13 +293,14 @@ struct Index {
   StreamingBubble() {
     Row() {
       Column() {
-        Text(this.streamingContent || 'AI 思考中...')
+        Text(this.streamingContent.length > 0 ? this.streamingContent : 'AI 思考中...')
           .fontSize(15)
           .fontColor('#1e293b')
           .padding(12)
           .borderRadius(12)
           .backgroundColor('#ffffff')
-          .border({ width: 1, color: '#e2e8f0' })
+          .borderWidth(1)
+          .borderColor('#e2e8f0')
       }
       .alignItems(HorizontalAlign.Start)
     }
@@ -300,9 +310,9 @@ struct Index {
   }
 
   private formatTime(isoString: string): string {
-    const d = new Date(isoString);
-    const h = d.getHours().toString().padStart(2, '0');
-    const m = d.getMinutes().toString().padStart(2, '0');
+    const d: Date = new Date(isoString);
+    const h: string = d.getHours().toString().padStart(2, '0');
+    const m: string = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
   }
 }

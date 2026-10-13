@@ -1,23 +1,19 @@
 /**
  * 咨询服务（ArkTS 版）
  * 
- * 对齐后端 consultation.py 逻辑：
- * 1. 构建 system prompt（含画像信息）
- * 2. 加载对话历史
- * 3. 调用 LLM（带工具调用）
- * 4. 执行工具调用
- * 5. 风险评估
- * 6. 保存消息
- * 
- * 注意：ArkTS 不支持 async generator，流式输出使用回调
+ * ArkTS 核心限制：
+ * - 不支持索引签名 → 使用 Map<string, ColumnValue>
+ * - 不支持 row['key'] → 使用 row.get('key')
+ * - 不支持 object 类型 → 使用具体 interface
  */
 
-import { DatabaseService } from './DatabaseService';
+import { relationalStore } from '@kit.ArkData';
+import { DatabaseService, DataRow, ColumnValue } from './DatabaseService';
 import { LLMClient, getHealthTools, ToolDefinition } from './LLMClient';
-import { ChatMessage, LLMMessage, RiskLevel } from '../models/HealthModels';
+import { ChatMessage, LLMMessage, LLMToolCall, RiskLevel, Priority } from '../models/HealthModels';
 
 // ============================================================
-// 系统提示词
+// 系统提示词 & 风险关键词
 // ============================================================
 
 const SYSTEM_PROMPT: string = `你是一个家庭 AI 健康管家，负责管理用户的健康数据和提供健康建议。
@@ -35,10 +31,6 @@ const SYSTEM_PROMPT: string = `你是一个家庭 AI 健康管家，负责管理
 - 保持关心、温暖的语气，像一个贴心的家庭医生
 - 回答简洁明了，不要长篇大论`;
 
-// ============================================================
-// 风险评估关键词
-// ============================================================
-
 const S_LEVEL_KEYWORDS: string[] = [
   '开药', '开点', '开个', '开些', '帮我开', '给我开', '配药', '处方',
   '帮我诊断', '给我诊断', '诊断一下', '我该吃什么药', '换个药',
@@ -54,13 +46,113 @@ const A_LEVEL_REPLY_KEYWORDS: string[] = [
 ];
 
 // ============================================================
-// 查询结果接口
+// 接口定义
 // ============================================================
 
 export interface ChatResult {
   reply: string;
   riskLevel: RiskLevel;
   toolCallNames: string[];
+}
+
+interface ToolArgs {
+  metric_name?: string;
+  info_type?: string;
+  value?: number;
+  unit?: string;
+  context?: string;
+  scale_code?: string;
+  limit?: number;
+}
+
+interface RefRange {
+  low: number;
+  high: number;
+  critLow: number;
+  critHigh: number;
+}
+
+interface RangeResult {
+  isAbnormal: boolean;
+  isCritical: boolean;
+  refLower: number | null;
+  refUpper: number | null;
+}
+
+// 工具结果（匿名对象返回用 interface 包装）
+interface ToolResultMetrics {
+  metrics: DataRow[];
+  count: number;
+}
+
+interface ToolResultProfile {
+  type: string;
+  records: DataRow[];
+  count: number;
+}
+
+interface ToolResultAbnormal {
+  abnormal_metrics: DataRow[];
+  count: number;
+}
+
+interface ToolResultExtract {
+  saved: boolean;
+  id: number;
+  metric_name: string;
+  value: number;
+  unit: string;
+  is_abnormal: boolean;
+  is_critical: boolean;
+}
+
+interface ToolResultScale {
+  scale_code: string;
+  scale_name: string;
+  message: string;
+}
+
+// ============================================================
+// 辅助函数
+// ============================================================
+
+function parseToolArgs(argsJson: string): ToolArgs {
+  try {
+    return JSON.parse(argsJson) as ToolArgs;
+  } catch (e) {
+    return {};
+  }
+}
+
+function getMapVal(row: DataRow, key: string): ColumnValue {
+  const v: ColumnValue | undefined = row.get(key);
+  return v === undefined ? null : v;
+}
+
+function getMapString(row: DataRow, key: string): string {
+  const v: ColumnValue = getMapVal(row, key);
+  if (v !== null && typeof v === 'string') {
+    return v;
+  }
+  return '';
+}
+
+function getMapNumber(row: DataRow, key: string): number {
+  const v: ColumnValue = getMapVal(row, key);
+  if (v !== null && typeof v === 'number') {
+    return v;
+  }
+  return 0;
+}
+
+function getRefRanges(): Map<string, RefRange> {
+  return new Map<string, RefRange>([
+    ['blood_pressure_systolic', { low: 90, high: 140, critLow: 90, critHigh: 180 }],
+    ['blood_pressure_diastolic', { low: 60, high: 90, critLow: 60, critHigh: 120 }],
+    ['glucose_fasting', { low: 3.9, high: 6.1, critLow: 2.8, critHigh: 16.7 }],
+    ['glucose_random', { low: 3.9, high: 11.1, critLow: 2.8, critHigh: 16.7 }],
+    ['heart_rate', { low: 60, high: 100, critLow: 40, critHigh: 150 }],
+  ]);
 }
 
 // ============================================================
@@ -76,120 +168,37 @@ export class ConsultationService {
     this.llm = llm;
   }
 
-  /**
-   * 非流式对话
-   */
   async chat(memberId: number, userMessage: string, source: string): Promise<ChatResult> {
-    // 1. 构建消息
     const systemPrompt: string = await this.buildSystemPrompt(memberId);
     const history: LLMMessage[] = await this.loadHistory(memberId, 10);
     await this.saveMessage(memberId, 'user', userMessage, source);
 
-    const messages: LLMMessage[] = [ { role: 'system', content: systemPrompt } ];
+    const messages: LLMMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
       messages.push(h);
     }
     messages.push({ role: 'user', content: userMessage });
 
-    // 2. 调用 LLM（带工具）
     const tools: ToolDefinition[] = getHealthTools();
     let response = await this.llm.chat(messages, tools, 0.7, 4096);
 
-    // 3. 处理工具调用
     const toolCallNames: string[] = [];
     let maxRounds: number = 5;
 
     while (response.tool_calls && maxRounds > 0) {
-      // 添加 assistant 消息
-      const assistantMsg: LLMMessage = {
+      messages.push({
         role: 'assistant',
         content: response.content,
-        tool_calls: response.tool_calls.map(tc => ({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
-      };
-      messages.push(assistantMsg);
-
-      // 执行工具调用
-      for (const tc of response.tool_calls) {
-        toolCallNames.push(tc.name);
-        const result: string = await this.executeToolCall(tc.name, tc.arguments, memberId);
-        const toolMsg: LLMMessage = {
-          role: 'tool',
-          content: result,
-          name: tc.name,
-          tool_call_id: tc.id,
-        };
-        messages.push(toolMsg);
-      }
-
-      response = await this.llm.chat(messages, tools, 0.7, 4096);
-      maxRounds--;
-    }
-
-    const reply: string = response.content || '';
-
-    // 4. 风险评估
-    const riskLevel: RiskLevel = this.assessRisk(userMessage, reply);
-
-    // 5. 保存回复
-    await this.saveMessage(memberId, 'assistant', reply, source);
-
-    return { reply, riskLevel, toolCallNames };
-  }
-
-  /**
-   * 流式对话（回调模式）
-   * @param onDelta 每段文本回调
-   * @param onRisk 风险评估回调
-   */
-  async chatStream(
-    memberId: number,
-    userMessage: string,
-    source: string,
-    onDelta: (text: string) => void,
-    onRisk: (riskLevel: RiskLevel, toolCallNames: string[]) => void,
-  ): Promise<void> {
-    // 1. 构建消息
-    const systemPrompt: string = await this.buildSystemPrompt(memberId);
-    const history: LLMMessage[] = await this.loadHistory(memberId, 10);
-    await this.saveMessage(memberId, 'user', userMessage, source);
-
-    const messages: LLMMessage[] = [ { role: 'system', content: systemPrompt } ];
-    for (const h of history) {
-      messages.push(h);
-    }
-    messages.push({ role: 'user', content: userMessage });
-
-    // 2. 非流式调用（带工具）处理工具调用
-    const tools: ToolDefinition[] = getHealthTools();
-    let response = await this.llm.chat(messages, tools, 0.7, 4096);
-
-    // 3. 处理工具调用循环
-    const toolCallNames: string[] = [];
-    let maxRounds: number = 5;
-
-    while (response.tool_calls && maxRounds > 0) {
-      const assistantMsg: LLMMessage = {
-        role: 'assistant',
-        content: response.content,
-        tool_calls: response.tool_calls.map(tc => ({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
-      };
-      messages.push(assistantMsg);
+        tool_calls: response.tool_calls,
+      });
 
       for (const tc of response.tool_calls) {
-        toolCallNames.push(tc.name);
-        const result: string = await this.executeToolCall(tc.name, tc.arguments, memberId);
+        toolCallNames.push(tc.function.name);
+        const result: string = await this.executeToolCall(tc.function.name, tc.function.arguments, memberId);
         messages.push({
           role: 'tool',
           content: result,
-          name: tc.name,
+          name: tc.function.name,
           tool_call_id: tc.id,
         });
       }
@@ -198,7 +207,58 @@ export class ConsultationService {
       maxRounds--;
     }
 
-    // 4. 模拟流式输出（分块回调）
+    const reply: string = response.content || '';
+    const riskLevel: RiskLevel = this.assessRisk(userMessage, reply);
+    await this.saveMessage(memberId, 'assistant', reply, source);
+
+    return { reply, riskLevel, toolCallNames };
+  }
+
+  async chatStream(
+    memberId: number,
+    userMessage: string,
+    source: string,
+    onDelta: (text: string) => void,
+    onRisk: (riskLevel: RiskLevel, toolCallNames: string[]) => void,
+  ): Promise<void> {
+    const systemPrompt: string = await this.buildSystemPrompt(memberId);
+    const history: LLMMessage[] = await this.loadHistory(memberId, 10);
+    await this.saveMessage(memberId, 'user', userMessage, source);
+
+    const messages: LLMMessage[] = [{ role: 'system', content: systemPrompt }];
+    for (const h of history) {
+      messages.push(h);
+    }
+    messages.push({ role: 'user', content: userMessage });
+
+    const tools: ToolDefinition[] = getHealthTools();
+    let response = await this.llm.chat(messages, tools, 0.7, 4096);
+
+    const toolCallNames: string[] = [];
+    let maxRounds: number = 5;
+
+    while (response.tool_calls && maxRounds > 0) {
+      messages.push({
+        role: 'assistant',
+        content: response.content,
+        tool_calls: response.tool_calls,
+      });
+
+      for (const tc of response.tool_calls) {
+        toolCallNames.push(tc.function.name);
+        const result: string = await this.executeToolCall(tc.function.name, tc.function.arguments, memberId);
+        messages.push({
+          role: 'tool',
+          content: result,
+          name: tc.function.name,
+          tool_call_id: tc.id,
+        });
+      }
+
+      response = await this.llm.chat(messages, tools, 0.7, 4096);
+      maxRounds--;
+    }
+
     const reply: string = response.content || '';
     const chunkSize: number = 20;
     for (let i = 0; i < reply.length; i += chunkSize) {
@@ -206,11 +266,8 @@ export class ConsultationService {
       onDelta(reply.substring(i, end));
     }
 
-    // 5. 风险评估
     const riskLevel: RiskLevel = this.assessRisk(userMessage, reply);
     onRisk(riskLevel, toolCallNames);
-
-    // 6. 保存回复
     await this.saveMessage(memberId, 'assistant', reply, source);
   }
 
@@ -225,10 +282,10 @@ export class ConsultationService {
         `SELECT memory_summary FROM family_members WHERE id = ?`,
         [String(memberId)]
       );
-      const rows = this.db.resultSetToArray(rs);
+      const rows: DataRow[] = this.db.resultSetToArray(rs);
       if (rows.length > 0) {
-        const summary = rows[0]['memory_summary'] as string;
-        if (summary) {
+        const summary: string = getMapString(rows[0], 'memory_summary');
+        if (summary.length > 0) {
           prompt += `\n\n[长期记忆]\n${summary}`;
         }
       }
@@ -245,13 +302,12 @@ export class ConsultationService {
        ORDER BY id DESC LIMIT ?`,
       [String(memberId), String(limit)]
     );
-    const rows = this.db.resultSetToArray(rs);
-    // 反转为时间顺序
+    const rows: DataRow[] = this.db.resultSetToArray(rs);
     const result: LLMMessage[] = [];
     for (let i = rows.length - 1; i >= 0; i--) {
       result.push({
-        role: rows[i]['role'] as string,
-        content: rows[i]['content'] as string,
+        role: getMapString(rows[i], 'role'),
+        content: getMapString(rows[i], 'content'),
       });
     }
     return result;
@@ -263,13 +319,14 @@ export class ConsultationService {
     content: string,
     source: string,
   ): Promise<void> {
-    await this.db.insert('chat_messages', {
+    const bucket: relationalStore.ValuesBucket = {
       member_id: memberId,
       role: role,
       content: content,
       source: source,
       message_type: 'normal',
-    });
+    } as relationalStore.ValuesBucket;
+    await this.db.insert('chat_messages', bucket);
   }
 
   private assessRisk(userMessage: string, reply: string): RiskLevel {
@@ -293,49 +350,46 @@ export class ConsultationService {
     return 'B';
   }
 
-  /**
-   * 执行工具调用，返回 JSON 字符串结果
-   */
   private async executeToolCall(
     name: string,
-    args: string,
+    argsJson: string,
     memberId: number,
   ): Promise<string> {
     try {
-      const params = JSON.parse(args) as Map<string, object>;
-      let result: object;
+      const args: ToolArgs = parseToolArgs(argsJson);
 
-      switch (name) {
-        case 'query_metrics':
-          result = await this.toolQueryMetrics(memberId, params);
-          break;
-        case 'query_profile':
-          result = await this.toolQueryProfile(memberId, params);
-          break;
-        case 'query_abnormal':
-          result = await this.toolQueryAbnormal(memberId);
-          break;
-        case 'extract_and_save':
-          result = await this.toolExtractAndSave(memberId, params);
-          break;
-        case 'assess_scale':
-          result = await this.toolAssessScale(memberId, params);
-          break;
-        default:
-          result = { error: `Unknown tool: ${name}` };
+      if (name === 'query_metrics') {
+        const result: ToolResultMetrics = await this.toolQueryMetrics(memberId, args);
+        return JSON.stringify(result);
       }
-      return JSON.stringify(result);
+      if (name === 'query_profile') {
+        const result: ToolResultProfile = await this.toolQueryProfile(memberId, args);
+        return JSON.stringify(result);
+      }
+      if (name === 'query_abnormal') {
+        const result: ToolResultAbnormal = await this.toolQueryAbnormal(memberId);
+        return JSON.stringify(result);
+      }
+      if (name === 'extract_and_save') {
+        const result: ToolResultExtract = await this.toolExtractAndSave(memberId, args);
+        return JSON.stringify(result);
+      }
+      if (name === 'assess_scale') {
+        const result: ToolResultScale = await this.toolAssessScale(args);
+        return JSON.stringify(result);
+      }
+      return JSON.stringify({ error: `Unknown tool: ${name}` });
     } catch (e) {
       return JSON.stringify({ error: `Tool execution failed: ${e}` });
     }
   }
 
-  private async toolQueryMetrics(memberId: number, params: Map<string, object>): Promise<object> {
-    const metricName = params.get('metric_name') as string;
-    const limit = (params.get('limit') as number) || 10;
-    let sql = `SELECT * FROM metric_records WHERE member_id = ?`;
+  private async toolQueryMetrics(memberId: number, args: ToolArgs): Promise<ToolResultMetrics> {
+    const metricName: string = args.metric_name || '';
+    const limit: number = args.limit || 10;
+    let sql: string = `SELECT * FROM metric_records WHERE member_id = ?`;
     const sqlArgs: string[] = [String(memberId)];
-    if (metricName) {
+    if (metricName.length > 0) {
       sql += ` AND metric_name = ?`;
       sqlArgs.push(metricName);
     }
@@ -343,42 +397,42 @@ export class ConsultationService {
     sqlArgs.push(String(limit));
 
     const rs = await this.db.query(sql, sqlArgs);
-    const rows = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = this.db.resultSetToArray(rs);
     return { metrics: rows, count: rows.length };
   }
 
-  private async toolQueryProfile(memberId: number, params: Map<string, object>): Promise<object> {
-    const infoType = (params.get('info_type') as string) || 'diagnoses';
+  private async toolQueryProfile(memberId: number, args: ToolArgs): Promise<ToolResultProfile> {
+    const infoType: string = args.info_type || 'diagnoses';
     const allowed: string[] = ['diagnoses', 'medications', 'allergies', 'family_histories', 'surgeries', 'vaccinations'];
     if (allowed.indexOf(infoType) < 0) {
-      return { error: `Invalid info_type: ${infoType}` };
+      return { type: infoType, records: [], count: 0 };
     }
     const rs = await this.db.query(
       `SELECT * FROM ${infoType} WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const rows = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = this.db.resultSetToArray(rs);
     return { type: infoType, records: rows, count: rows.length };
   }
 
-  private async toolQueryAbnormal(memberId: number): Promise<object> {
+  private async toolQueryAbnormal(memberId: number): Promise<ToolResultAbnormal> {
     const rs = await this.db.query(
       `SELECT * FROM metric_records WHERE member_id = ? AND is_abnormal = 1 ORDER BY measured_at DESC LIMIT 10`,
       [String(memberId)]
     );
-    const rows = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = this.db.resultSetToArray(rs);
     return { abnormal_metrics: rows, count: rows.length };
   }
 
-  private async toolExtractAndSave(memberId: number, params: Map<string, object>): Promise<object> {
-    const metricName = params.get('metric_name') as string;
-    const value = params.get('value') as number;
-    const unit = (params.get('unit') as string) || '';
-    const context = (params.get('context') as string) || null;
+  private async toolExtractAndSave(memberId: number, args: ToolArgs): Promise<ToolResultExtract> {
+    const metricName: string = args.metric_name || '';
+    const value: number = args.value || 0;
+    const unit: string = args.unit || '';
+    const context: string = args.context || '';
 
-    const rangeResult = this.checkReferenceRange(metricName, value);
+    const rangeResult: RangeResult = this.checkReferenceRange(metricName, value);
 
-    const id = await this.db.insert('metric_records', {
+    const bucket: relationalStore.ValuesBucket = {
       member_id: memberId,
       metric_name: metricName,
       value: value,
@@ -388,9 +442,11 @@ export class ConsultationService {
       is_abnormal: rangeResult.isAbnormal ? 1 : 0,
       is_critical: rangeResult.isCritical ? 1 : 0,
       measured_at: new Date().toISOString(),
-      context: context,
+      context: context.length > 0 ? context : null,
       source_type: 'chat_extract',
-    });
+    } as relationalStore.ValuesBucket;
+
+    const id: number = await this.db.insert('metric_records', bucket);
 
     return {
       saved: true,
@@ -403,8 +459,8 @@ export class ConsultationService {
     };
   }
 
-  private async toolAssessScale(memberId: number, params: Map<string, object>): Promise<object> {
-    const scaleCode = params.get('scale_code') as string;
+  private async toolAssessScale(args: ToolArgs): Promise<ToolResultScale> {
+    const scaleCode: string = args.scale_code || '';
     const scaleNames: Map<string, string> = new Map<string, string>([
       ['phq9', 'PHQ-9 抑郁症筛查量表'],
       ['gad7', 'GAD-7 焦虑症筛查量表'],
@@ -416,7 +472,7 @@ export class ConsultationService {
       ['ad8', 'AD8 认知功能筛查'],
       ['stroke', '卒中风险评分'],
     ]);
-    const scaleName = scaleNames.get(scaleCode) || scaleCode;
+    const scaleName: string = scaleNames.get(scaleCode) || scaleCode;
     return {
       scale_code: scaleCode,
       scale_name: scaleName,
@@ -424,28 +480,12 @@ export class ConsultationService {
     };
   }
 
-  /**
-   * 简化的参考范围检查
-   */
-  private checkReferenceRange(metricName: string, value: number): {
-    isAbnormal: boolean; isCritical: boolean; refLower: number | null; refUpper: number | null;
-  } {
-    interface Range {
-      low: number; high: number; critLow: number; critHigh: number;
-    }
-    const ranges: Map<string, Range> = new Map<string, Range>([
-      ['blood_pressure_systolic', { low: 90, high: 140, critLow: 90, critHigh: 180 }],
-      ['blood_pressure_diastolic', { low: 60, high: 90, critLow: 60, critHigh: 120 }],
-      ['glucose_fasting', { low: 3.9, high: 6.1, critLow: 2.8, critHigh: 16.7 }],
-      ['glucose_random', { low: 3.9, high: 11.1, critLow: 2.8, critHigh: 16.7 }],
-      ['heart_rate', { low: 60, high: 100, critLow: 40, critHigh: 150 }],
-    ]);
-
-    const range = ranges.get(metricName);
+  private checkReferenceRange(metricName: string, value: number): RangeResult {
+    const ranges: Map<string, RefRange> = getRefRanges();
+    const range: RefRange | undefined = ranges.get(metricName);
     if (!range) {
       return { isAbnormal: false, isCritical: false, refLower: null, refUpper: null };
     }
-
     const isCritical: boolean = value <= range.critLow || value >= range.critHigh;
     const isAbnormal: boolean = value < range.low || value > range.high;
     return { isAbnormal, isCritical, refLower: range.low, refUpper: range.high };
