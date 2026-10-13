@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "health-steward",
+  "version": "1.0.0",
+  "description": "AI 健康管家 — 鸿蒙端",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.6"
+  }
+}
