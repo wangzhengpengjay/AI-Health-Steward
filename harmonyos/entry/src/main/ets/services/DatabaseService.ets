@@ -270,13 +270,13 @@ export class DatabaseService {
   /**
    * 将 ResultSet 转为 DataRow 数组
    */
-  resultSetToArray(rs: relationalStore.ResultSet): DataRow[] {
+  async resultSetToArray(rs: relationalStore.ResultSet): Promise<DataRow[]> {
     const results: DataRow[] = [];
     while (rs.goToNextRow()) {
       const row: DataRow = new Map<string, ColumnValue>();
       for (let i = 0; i < rs.columnCount; i++) {
         const colName: string = rs.getColumnName(i);
-        const colType: number = rs.getColumnType(i);
+        const colType: number = await rs.getColumnType(i);
         if (colType === COL_INTEGER) {
           row.set(colName, rs.getLong(i));
         } else if (colType === COL_FLOAT) {

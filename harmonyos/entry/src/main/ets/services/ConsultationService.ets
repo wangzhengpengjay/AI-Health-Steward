@@ -261,7 +261,7 @@ export class ConsultationService {
         `SELECT memory_summary FROM family_members WHERE id = ?`,
         [String(memberId)]
       );
-      const rows: DataRow[] = this.db.resultSetToArray(rs);
+      const rows: DataRow[] = await this.db.resultSetToArray(rs);
       if (rows.length > 0) {
         const summary: string = getMapString(rows[0], 'memory_summary');
         if (summary.length > 0) {
@@ -281,7 +281,7 @@ export class ConsultationService {
        ORDER BY id DESC LIMIT ?`,
       [String(memberId), String(limit)]
     );
-    const rows: DataRow[] = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = await this.db.resultSetToArray(rs);
     const result: LLMMessage[] = [];
     for (let i = rows.length - 1; i >= 0; i--) {
       result.push({
@@ -376,7 +376,7 @@ export class ConsultationService {
     sqlArgs.push(String(limit));
 
     const rs = await this.db.query(sql, sqlArgs);
-    const rows: DataRow[] = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = await this.db.resultSetToArray(rs);
     return { metrics: rows, count: rows.length };
   }
 
@@ -390,7 +390,7 @@ export class ConsultationService {
       `SELECT * FROM ${infoType} WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const rows: DataRow[] = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = await this.db.resultSetToArray(rs);
     return { type: infoType, records: rows, count: rows.length };
   }
 
@@ -399,7 +399,7 @@ export class ConsultationService {
       `SELECT * FROM metric_records WHERE member_id = ? AND is_abnormal = 1 ORDER BY measured_at DESC LIMIT 10`,
       [String(memberId)]
     );
-    const rows: DataRow[] = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = await this.db.resultSetToArray(rs);
     return { abnormal_metrics: rows, count: rows.length };
   }
 

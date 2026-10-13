@@ -130,38 +130,38 @@ export class PatrolEngine {
       `SELECT * FROM family_members WHERE id = ? AND is_deleted = 0`,
       [String(memberId)]
     );
-    const memberRows: DataRow[] = this.db.resultSetToArray(memberRs);
+    const memberRows: DataRow[] = await this.db.resultSetToArray(memberRs);
     const member: DataRow = memberRows.length > 0 ? memberRows[0] : new Map<string, ColumnValue>();
 
     const metricsRs = await this.db.query(
       `SELECT * FROM metric_records WHERE member_id = ? AND measured_at >= datetime('now', '-30 days') ORDER BY measured_at DESC`,
       [String(memberId)]
     );
-    const recentMetrics: DataRow[] = this.db.resultSetToArray(metricsRs);
+    const recentMetrics: DataRow[] = await this.db.resultSetToArray(metricsRs);
 
     const abnormalRs = await this.db.query(
       `SELECT * FROM metric_records WHERE member_id = ? AND is_abnormal = 1 ORDER BY measured_at DESC LIMIT 10`,
       [String(memberId)]
     );
-    const abnormalMetrics: DataRow[] = this.db.resultSetToArray(abnormalRs);
+    const abnormalMetrics: DataRow[] = await this.db.resultSetToArray(abnormalRs);
 
     const diagRs = await this.db.query(
       `SELECT * FROM diagnoses WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const diagnoses: DataRow[] = this.db.resultSetToArray(diagRs);
+    const diagnoses: DataRow[] = await this.db.resultSetToArray(diagRs);
 
     const medRs = await this.db.query(
       `SELECT * FROM medications WHERE member_id = ? ORDER BY created_at DESC`,
       [String(memberId)]
     );
-    const medications: DataRow[] = this.db.resultSetToArray(medRs);
+    const medications: DataRow[] = await this.db.resultSetToArray(medRs);
 
     const taskRs = await this.db.query(
       `SELECT * FROM health_tasks WHERE member_id = ? AND status = 'open' ORDER BY due_date ASC`,
       [String(memberId)]
     );
-    const openTasks: DataRow[] = this.db.resultSetToArray(taskRs);
+    const openTasks: DataRow[] = await this.db.resultSetToArray(taskRs);
 
     const memorySummary: string = getMapString(member, 'memory_summary');
 
@@ -317,7 +317,7 @@ export class PatrolEngine {
       `SELECT COUNT(*) as count FROM chat_messages WHERE member_id = ? AND source = 'proactive' AND created_at >= datetime('now', ?)`,
       [String(memberId), period]
     );
-    const rows: DataRow[] = this.db.resultSetToArray(rs);
+    const rows: DataRow[] = await this.db.resultSetToArray(rs);
     const count: number = rows.length > 0 ? getMapNumber(rows[0], 'count') : 0;
 
     return count < limit;

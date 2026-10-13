@@ -48,7 +48,7 @@ export class PatrolWorkScheduler extends WorkSchedulerExtensionAbility {
       `SELECT id FROM family_members WHERE is_deleted = 0`,
       []
     );
-    const members: DataRow[] = db.resultSetToArray(rs);
+    const members: DataRow[] = await db.resultSetToArray(rs);
 
     for (const member of members) {
       const memberIdVal: ColumnValue | undefined = member.get('id');
