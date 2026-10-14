@@ -54,7 +54,7 @@ struct Index {
       // TODO: 实际应从安全存储中读取 API Key
       const config: LLMConfig = {
         baseUrl: 'https://api.deepseek.com/v1',
-        apiKey: 'sk-1e018e6d6ae4429fa3b069cbe5900cb9',
+        apiKey: '请在运行前替换为你的 DeepSeek API Key',
         model: 'deepseek-flash',
         temperature: 0.7,
         maxTokens: 4096,
