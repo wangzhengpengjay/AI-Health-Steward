@@ -1,7 +1,7 @@
 # 本地 AI 健康管家 - 项目总览
 
 > 本文档是项目的导航入口，说明文件架构、每份文件的作用、当前进度和下一步。
-> 最后更新：2026-08-17（V1.2 完成，文档同步修复，V1.3 方向探索 20 个方向）
+> 最后更新：2026-10-14（V1.4 主动健康 Agent + 鸿蒙端 MVP 完成）
 
 ---
 
@@ -22,9 +22,10 @@
 ## 二、技术栈（已确定）
 
 | 层 | 选型 | 决策依据 |
-|---|------|---------|
+|---|------|--------|
 | 后端 | Python 3.12 + FastAPI | AI/LLM 生态碾压级优势（design.md TD1） |
 | 前端 | React 18 + Vite + TypeScript + TailwindCSS | MediUI Design Token 映射 |
+| 鸿蒙端 | HarmonyOS API 26 + ArkTS + SQLite (RDB) | 原生性能 + 后台任务调度 + 代理提醒 |
 | 数据库 | PostgreSQL 16 + pgvector | 单库事务一致性，结构化+向量一体化（TD2） |
 | ORM | SQLAlchemy 2.0 + Alembic | 异步支持，2.0 Mapped 语法 |
 | AI 模型 | OpenAI 兼容 API + Ollama | function calling 一体化路由（TD4） |
@@ -328,7 +329,33 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 3. ~~端到端联调~~ — ✅ Docker 三容器运行中，核心流程已验证
 4. ~~发布收尾~~ — ✅ 示例数据、截图、README_EN 同步已完成
 
-### 7.2 V1.3 新功能方向探索（进行中 🔍）
+### 7.2 V1.3 就诊准备功能（已完成 ✅）
+
+- 主诉驱动的科室推荐（规则映射，不调 LLM）
+- AI 生成就诊清单（病情摘要+问题清单+资料准备）
+- 浮窗交互，不打断咨询链路
+- PDF 导出（浏览器原生 print）
+
+### 7.3 V1.4 主动健康 Agent + 鸿蒙端 MVP（已完成 ✅）
+
+**后端主动 Agent：**
+- 定时巡检引擎（规则层 + AI 层双层判断）
+- 规则层：危急值即时推送、异常项每周提醒、待办到期每日提醒
+- AI 层：基于画像数据的个性化健康建议生成
+- 频率控制：critical 不限 / high 每周 1 次 / normal 每天 1 次 / low 不推
+- 巡检结果回收服务（patrol_engine.py + result_collector.py）
+- 前端主动消息展示（红色横幅 + 标识标签）
+
+**鸿蒙端独立应用：**
+- HarmonyOS API 26 + ArkTS 原生开发
+- 本地 SQLite (RDB) 存储，云端仅用于 LLM 调用
+- 核心服务：DatabaseService / LLMClient / ConsultationService / PatrolEngine / ReminderService / PatrolWorkScheduler
+- 后台延迟任务调度（WorkScheduler）
+- 代理提醒（reminderAgentManager）
+- 独立于 Python 后端，作为独立产品发布
+- 项目路径：`/Users/zhengpengwang/AIHealthSteward`（独立 git 仓库）
+
+### 7.4 V1.3 新功能方向探索（进行中 🔍）
 
 已完成 20 个方向的头脑风暴与行业调研，分为四组：
 
@@ -342,7 +369,7 @@ PRD 已通过两轮评审，达到可进入需求评审标准：
 
 > 详细调研与方向分析见本地 `openspec/changes/ai-health-steward/V1.3-DIRECTIONS.md`（未纳入 git，仅本地参考）
 
-### 7.3 原有建议后续方向（V1.3+）
+### 7.5 原有建议后续方向（V1.5+）
 
 - **数据趋势可视化深化**：多指标同图对比、历史报告对比、趋势预警线
 - **用药管理页**：独立用药管理界面（目前只有数据表无前端页面）
