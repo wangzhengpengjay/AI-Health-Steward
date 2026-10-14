@@ -42,7 +42,6 @@ Most health apps are black boxes: your lab results, diagnoses, and medications g
 - **Periodic Health Summaries** — auto weekly/monthly/yearly reports with trends, anomalies, and follow-up items
 - **Risk Self-Assessment** — built-in 9 scales: PHQ-9 (depression), GAD-7 (anxiety), diabetes risk, ASCVD (cardiovascular), ISI (insomnia), hypertension risk, dyslipidemia, AD8 (cognitive), and stroke risk
 - **Proactive Health Agent** — scheduled patrol engine with rule-based + AI dual-layer inference, auto-pushes personalized health reminders (critical values / weekly abnormal alerts / daily task reminders), generates recheck/medication/follow-up tasks
-- **HarmonyOS App** — native HarmonyOS (ArkTS) standalone app with local SQLite + cloud LLM, supports chat/proactive patrol/agent reminders/background scheduling
 - **Follow-up / Medication Reminders** — auto-generated todo tasks (recheck / medication / follow-up / appointment)
 - **Report Management** — full lifecycle (upload → AI extraction → confirm → archive); three upload entry points
 - **Lab & Exam Tracking** — lab metrics grouped by report with per-test charts; exam findings on a category timeline
@@ -130,7 +129,6 @@ See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 |-------|------------|
 | Backend | Python 3.12 + FastAPI |
 | Frontend | React 18 + Vite + TypeScript + TailwindCSS |
-| HarmonyOS | HarmonyOS API 26 + ArkTS + SQLite (RDB) |
 | Database | PostgreSQL 16 + pgvector |
 | ORM | SQLAlchemy 2.0 + Alembic |
 | AI | OpenAI-compatible API (multimodal/text) + Ollama (local LLM) |
@@ -182,7 +180,7 @@ AI-Health-Steward/
 | V1.1 | Three new features — follow-up/medication reminders, periodic health summaries, risk self-assessment (9 scales) | ✅ Done |
 | V1.2 | Code quality optimization — 12 items (SSE blocking fix, transaction optimization, JSON cleaning, dedup, pagination, etc.) | ✅ Done |
 | V1.3 | Visit Preparation — chief complaint-driven department recommendation, AI-generated checklist, floating panel, PDF export | ✅ Done |
-| V1.4 | Proactive Health Agent — scheduled patrol engine, rule+AI dual-layer inference, proactive push, task generation, HarmonyOS MVP | ✅ Done |
+| V1.4 | Proactive Health Agent — scheduled patrol engine, rule+AI dual-layer inference, proactive push, task generation | ✅ Done |
 
 ---
 
