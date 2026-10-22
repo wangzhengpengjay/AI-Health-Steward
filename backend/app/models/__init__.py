@@ -15,6 +15,7 @@ from app.models.feishu import FeishuChannel
 from app.models.tasks import HealthTask
 from app.models.summaries import HealthSummary
 from app.models.assessments import ScaleResult
+from app.models.paired_device import PairedDevice
 
 __all__ = [
     "FamilyMember",
@@ -31,4 +32,5 @@ __all__ = [
     "CheckupReport",
     "ReportRecord",
     "FeishuChannel",
+    "PairedDevice",
 ]

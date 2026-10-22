@@ -527,6 +527,9 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* Mobile Pairing */}
+      <PairingSection />
+
      {/* System Info */}
       <section>
         <h2 className="mb-3 text-sm font-medium text-slate-500">系统信息</h2>
@@ -701,5 +704,338 @@ function ChannelModal({ channel, members, onSave, onClose, saving }: ChannelModa
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Mobile Pairing Section ──
+
+interface PairedDeviceInfo {
+  id: number
+  device_name: string
+  platform: string | null
+  role: string
+  member_id: number | null
+  paired_at: string
+  last_active_at: string | null
+  is_revoked: boolean
+}
+
+function PairingSection() {
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
+  const [codeExpiry, setCodeExpiry] = useState<number>(0)
+  const [generating, setGenerating] = useState(false)
+  const [devices, setDevices] = useState<PairedDeviceInfo[]>([])
+  const [loadingDevices, setLoadingDevices] = useState(false)
+  const [serverUrl, setServerUrl] = useState<string>('')
+  const [setupMethod, setSetupMethod] = useState<string>('')
+  const [domainInput, setDomainInput] = useState<string>('')
+  const [tailscaleIp, setTailscaleIp] = useState<string>('')
+
+  // Detect server URL from the browser's current location
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin
+      setServerUrl(origin)
+    }
+  }, [])
+
+  // Persist setup config to localStorage so it survives page refresh
+  useEffect(() => {
+    const saved = localStorage.getItem('pairing_setup_config')
+    if (saved) {
+      try {
+        const cfg = JSON.parse(saved)
+        setSetupMethod(cfg.setupMethod || '')
+        setDomainInput(cfg.domainInput || '')
+        setTailscaleIp(cfg.tailscaleIp || '')
+      } catch {}
+    }
+  }, [])
+
+  // Save config whenever it changes
+  useEffect(() => {
+    localStorage.setItem('pairing_setup_config', JSON.stringify({ setupMethod, domainInput, tailscaleIp }))
+  }, [setupMethod, domainInput, tailscaleIp])
+
+  const generateCode = async () => {
+    setGenerating(true)
+    try {
+      const res = await fetch('/api/v1/pair/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'admin' }),
+      })
+      if (!res.ok) throw new Error('生成失败')
+      const data = await res.json()
+      setPairingCode(data.code)
+      setCodeExpiry(data.expires_in)
+      // Auto-clear code after expiry
+      setTimeout(() => { setPairingCode(null) }, data.expires_in * 1000)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '生成配对码失败')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const loadDevices = async () => {
+    setLoadingDevices(true)
+    try {
+      const res = await fetch('/api/v1/pair/devices')
+      if (res.ok) {
+        setDevices(await res.json())
+      }
+    } finally {
+      setLoadingDevices(false)
+    }
+  }
+
+  const revokeDevice = async (id: number) => {
+    if (!confirm('确定要吊销此设备的访问权限吗？')) return
+    await fetch(`/api/v1/pair/devices/${id}`, { method: 'DELETE' })
+    loadDevices()
+  }
+
+  useEffect(() => {
+    loadDevices()
+  }, [])
+
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-medium text-slate-500">移动设备配对</h2>
+      <div className="space-y-4">
+        {/* Fixed domain setup guide */}
+        <div className="rounded-card border border-slate-200 bg-bg-primary p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="material-symbols-rounded text-xl text-primary">cloud_done</span>
+            <h3 className="font-medium text-slate-800">配置固定域名（推荐）</h3>
+          </div>
+          <p className="mb-3 text-sm text-slate-500">
+            临时地址重启后会变，导致手机需要重新配对。配置固定域名后，一次配对即可永久使用。
+          </p>
+          <select
+            value={setupMethod}
+            onChange={(e) => setSetupMethod(e.target.value)}
+            className="w-full rounded-field border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none"
+          >
+            <option value="">— 选择方案 —</option>
+            <option value="cloudflare">方案 A：Cloudflare Tunnel（免费，需域名）</option>
+            <option value="caddy">方案 B：Caddy（免费，需域名，自动 HTTPS）</option>
+            <option value="tailscale">方案 C：Tailscale（免费，无需域名）</option>
+          </select>
+
+          {/* Cloudflare Tunnel */}
+          {setupMethod === 'cloudflare' && (
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">你的域名</label>
+                <input
+                  type="text"
+                  value={domainInput}
+                  onChange={(e) => setDomainInput(e.target.value)}
+                  placeholder="health.yourdomain.com"
+                  className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-400">将此域名绑定到 Cloudflare，Cloudflare 会自动提供 HTTPS</p>
+              </div>
+              {domainInput && (
+                <div className="rounded-field bg-primary-light px-3 py-2 text-sm">
+                  <span className="text-slate-500">手机端服务器地址：</span>
+                  <code className="font-mono font-medium text-primary">https://{domainInput}</code>
+                </div>
+              )}
+              <pre className="overflow-x-auto rounded bg-bg-tertiary p-2.5 text-xs text-slate-600"><code>{`# 1. 登录 Cloudflare（浏览器授权）
+cloudflared tunnel login
+
+# 2. 创建命名隧道（永久存在）
+cloudflared tunnel create health-steward
+
+# 3. 绑定到你的域名
+cloudflared tunnel route dns health-steward ${domainInput || 'health.yourdomain.com'}
+
+# 4. 创建配置文件
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml << 'EOF'
+tunnel: health-steward
+credentials-file: ~/.cloudflared/<TUNNEL_ID>.json
+ingress:
+  - hostname: ${domainInput || 'health.yourdomain.com'}
+    service: http://localhost:18000
+  - service: http_status:404
+EOF
+
+# 5. 启动（URL 永远不变）
+cloudflared tunnel run health-steward`}</code></pre>
+              <p className="text-xs text-slate-400">HTTPS 自动提供，手机端填写上方显示的服务器地址</p>
+            </div>
+          )}
+
+          {/* Caddy */}
+          {setupMethod === 'caddy' && (
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">你的域名</label>
+                <input
+                  type="text"
+                  value={domainInput}
+                  onChange={(e) => setDomainInput(e.target.value)}
+                  placeholder="health.yourdomain.com"
+                  className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-400">域名需已解析到你的服务器 IP，Caddy 自动申请 Let's Encrypt 证书</p>
+              </div>
+              {domainInput && (
+                <div className="rounded-field bg-primary-light px-3 py-2 text-sm">
+                  <span className="text-slate-500">手机端服务器地址：</span>
+                  <code className="font-mono font-medium text-primary">https://{domainInput}</code>
+                </div>
+              )}
+              <pre className="overflow-x-auto rounded bg-bg-tertiary p-2.5 text-xs text-slate-600"><code>{`# 安装 Caddy 后，编辑 Caddyfile
+${domainInput || 'health.yourdomain.com'} {
+    reverse_proxy localhost:18000
+}
+
+# 启动
+caddy run`}</code></pre>
+              <p className="text-xs text-slate-400">Caddy 自动申请 Let's Encrypt 证书，手机端填写上方显示的服务器地址</p>
+            </div>
+          )}
+
+          {/* Tailscale */}
+          {setupMethod === 'tailscale' && (
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">电脑的 Tailscale IP</label>
+                <input
+                  type="text"
+                  value={tailscaleIp}
+                  onChange={(e) => setTailscaleIp(e.target.value)}
+                  placeholder="100.64.0.1"
+                  className="w-full rounded-field border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-400">运行 <code className="text-slate-600">tailscale ip -4</code> 查看，IP 固定不变</p>
+              </div>
+              {tailscaleIp && (
+                <div className="rounded-field bg-primary-light px-3 py-2 text-sm">
+                  <span className="text-slate-500">手机端服务器地址：</span>
+                  <code className="font-mono font-medium text-primary">http://{tailscaleIp}:18000</code>
+                </div>
+              )}
+              <pre className="overflow-x-auto rounded bg-bg-tertiary p-2.5 text-xs text-slate-600"><code>{`# 电脑和手机都装 Tailscale，加入同一网络
+brew install tailscale        # 电脑
+tailscale up                  # 电脑启动
+
+# 查看电脑的 Tailscale IP（固定不变）
+tailscale ip -4
+# 例如输出：${tailscaleIp || '100.64.0.1'}
+
+# 手机端配对时填写
+http://${tailscaleIp || '100.64.0.1'}:18000`}</code></pre>
+              <p className="text-xs text-slate-400">无需域名，IP 固定不变。手机需安装 Tailscale App 并保持运行。</p>
+            </div>
+          )}
+        </div>
+
+        {/* Generate pairing code */}
+        <div className="rounded-card border border-slate-200 bg-bg-primary p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="material-symbols-rounded text-xl text-primary">phone_iphone</span>
+            <h3 className="font-medium text-slate-800">配对新设备</h3>
+          </div>
+          <p className="mb-4 text-sm text-slate-500">
+            生成一次性配对码，在手机端输入即可绑定。配对后手机可通过公网安全访问家庭健康数据。
+          </p>
+          {pairingCode ? (
+            <div className="flex flex-col items-center gap-3 rounded-lg bg-primary-light p-6">
+              <p className="text-xs font-medium text-primary">配对码（{Math.ceil(codeExpiry / 60)} 分钟内有效）</p>
+              <p className="font-mono text-4xl font-bold tracking-[0.3em] text-primary">{pairingCode}</p>
+              {(() => {
+                let addr = serverUrl
+                if (setupMethod === 'cloudflare' && domainInput) addr = `https://${domainInput}`
+                else if (setupMethod === 'caddy' && domainInput) addr = `https://${domainInput}`
+                else if (setupMethod === 'tailscale' && tailscaleIp) addr = `http://${tailscaleIp}:18000`
+                return addr ? (
+                  <div className="mt-2 w-full border-t border-primary/20 pt-3 text-center">
+                    <p className="text-xs text-slate-500">手机端服务器地址填写：</p>
+                    <p className="mt-1 break-all font-mono text-sm font-medium text-slate-700">{addr}</p>
+                  </div>
+                ) : null
+              })()}
+              <button
+                onClick={() => setPairingCode(null)}
+                className="text-xs text-slate-400 underline hover:text-slate-600"
+              >
+                关闭
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={generateCode}
+              disabled={generating}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm text-white transition hover:bg-primary-hover disabled:opacity-50"
+            >
+              <span className="material-symbols-rounded text-base">
+                {generating ? 'progress_activity' : 'qr_code_2'}
+              </span>
+              {generating ? '生成中...' : '生成配对码'}
+            </button>
+          )}
+        </div>
+
+        {/* Paired devices list */}
+        <div className="rounded-card border border-slate-200 bg-bg-primary p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-rounded text-xl text-slate-400">devices</span>
+              <h3 className="font-medium text-slate-800">已配对设备</h3>
+            </div>
+            <button
+              onClick={loadDevices}
+              disabled={loadingDevices}
+              className="text-xs text-slate-400 hover:text-slate-600"
+            >
+              {loadingDevices ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+          {devices.length === 0 ? (
+            <p className="py-3 text-center text-sm text-slate-400">暂无已配对设备</p>
+          ) : (
+            <div className="space-y-2">
+              {devices.map(d => (
+                <div
+                  key={d.id}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
+                    d.is_revoked ? 'border-slate-200 opacity-50' : 'border-slate-200'
+                  }`}
+                >
+                  <span className="material-symbols-rounded text-xl text-slate-400">
+                    {d.platform === 'ios' ? 'phone_iphone' : d.platform === 'android' ? 'android' : 'devices'}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-700">
+                      {d.device_name}
+                      {d.is_revoked && <span className="ml-2 text-xs text-red-500">已吊销</span>}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      {d.platform ?? 'unknown'} · {d.role} · 配对于 {new Date(d.paired_at).toLocaleDateString()}
+                      {d.last_active_at && ` · 最后活跃 ${new Date(d.last_active_at).toLocaleDateString()}`}
+                    </div>
+                  </div>
+                  {!d.is_revoked && (
+                    <button
+                      onClick={() => revokeDevice(d.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-slate-300 hover:bg-red-50 hover:text-red-500"
+                      title="吊销"
+                    >
+                      <span className="material-symbols-rounded text-base">block</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   )
 }

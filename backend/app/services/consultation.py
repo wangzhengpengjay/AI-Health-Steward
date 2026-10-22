@@ -385,6 +385,13 @@ class ConsultationService:
         from app.services.member_memory import get_memory_summary
 
         prompt = SYSTEM_PROMPT
+
+        # Inject current date/time so the model knows "now" (Shanghai UTC+8)
+        from datetime import timedelta
+        shanghai_tz = timezone(timedelta(hours=8))
+        now_str = datetime.now(shanghai_tz).strftime("%Y年%m月%d日 %H:%M %A")
+        prompt += f'\n\n【当前时间】现在是 {now_str}。回答时涉及"最近"、"今天"等时间概念时以此为准。'
+
         try:
             from app.services.checkup_recommend import build_health_profile
             profile = await build_health_profile(self.db, member_id)

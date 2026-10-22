@@ -5,9 +5,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.router import api_router
+from app.api.v1.router import api_router, pairing_router, admin_router
 from app.core.config import settings
 from app.core.database import async_session_factory
 from app.services.feishu import feishu_bot
@@ -44,15 +43,56 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: Capacitor iOS WKWebView sends Origin: capacitor://localhost
+# and Android sends Origin: https://localhost — both are non-standard origins
+# that can't be pre-listed. Like openGym, we reflect any Origin back.
+# We never send Allow-Credentials (auth is Bearer token, not cookies).
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
+
+
+class CORSSecurityMiddleware(BaseHTTPMiddleware):
+    """Reflect-Origin CORS: allows any origin, supports preflight OPTIONS.
+    
+    Mirrors openGym's approach:
+    - Reflects the requesting Origin back (not '*')
+    - Never sends Allow-Credentials (Bearer Token, not cookies)
+    - Allows GET, POST, PUT, DELETE, OPTIONS methods
+    - Allows Content-Type, Authorization headers
+    - OPTIONS preflight returns 204
+    """
+    async def dispatch(self, request, call_next):
+        origin = request.headers.get("origin", "")
+
+        # Handle preflight OPTIONS
+        if request.method == "OPTIONS" and origin:
+            return StarletteResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    "Access-Control-Max-Age": "600",
+                    "Vary": "Origin",
+                },
+            )
+
+        # Process normal request
+        response = await call_next(request)
+
+        # Add CORS headers to actual responses
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+
+        return response
+
+
+app.add_middleware(CORSSecurityMiddleware)
 
 app.include_router(api_router)
+app.include_router(admin_router)
+app.include_router(pairing_router)
 
 
 @app.get("/health", tags=["health"])

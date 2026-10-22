@@ -267,3 +267,136 @@ async def chat_stream(
         event_generator(),
         media_type="text/event-stream",
     )
+
+
+# ---------------------------------------------------------------------------
+# Async chat task — for mobile clients behind Cloudflare Tunnel (100s timeout)
+# ---------------------------------------------------------------------------
+
+import uuid
+import time as _time
+
+# In-memory storage for async chat tasks
+# task_id -> {"status": "processing"|"done"|"error", "reply": str, "report": dict|None, "error": str|None, "created_at": float}
+_async_chat_tasks: dict[str, dict] = {}
+_ASYNC_TASK_TTL = 600  # 10 minutes
+
+
+def _cleanup_async_tasks() -> None:
+    """Remove expired async chat tasks."""
+    now = _time.time()
+    expired = [tid for tid, v in _async_chat_tasks.items() if now - v["created_at"] > _ASYNC_TASK_TTL]
+    for tid in expired:
+        _async_chat_tasks.pop(tid, None)
+
+
+async def _run_async_chat(task_id: str, member_id: int, message: str, image_data_url: str | None) -> None:
+    """Background task that runs the consultation and stores the result."""
+    try:
+        async with async_session_factory() as db:
+            model_router = get_model_router()
+            service = ConsultationService(
+                router=model_router,
+                tool_registry=ToolRegistry(),
+                db=db,
+            )
+            reply_parts: list[str] = []
+            report_data: dict | None = None
+
+            async for event_type, data in service.chat_stream(
+                member_id=member_id,
+                user_message=message,
+                image_data_url=image_data_url,
+            ):
+                if event_type == "delta":
+                    reply_parts.append(data)
+                elif event_type == "report":
+                    try:
+                        report_data = json.loads(data) if isinstance(data, str) else data
+                    except (json.JSONDecodeError, TypeError):
+                        report_data = {"raw": data}
+
+            await db.commit()
+
+            _async_chat_tasks[task_id] = {
+                "status": "done",
+                "reply": "".join(reply_parts),
+                "report": report_data,
+                "error": None,
+                "created_at": _time.time(),
+            }
+
+    except ProviderNotConfiguredError as e:
+        _async_chat_tasks[task_id] = {
+            "status": "error",
+            "reply": "",
+            "report": None,
+            "error": str(e),
+            "created_at": _time.time(),
+        }
+    except Exception as e:
+        logger.exception("Async chat task %s failed", task_id)
+        _async_chat_tasks[task_id] = {
+            "status": "error",
+            "reply": "",
+            "report": None,
+            "error": f"AI 服务暂时不可用: {e}",
+            "created_at": _time.time(),
+        }
+
+
+@router.post("/{member_id}/chat/async")
+async def chat_async(
+    member_id: int,
+    message: str = Form(...),
+    file: UploadFile | None = File(None),
+    db: AsyncSession = Depends(get_db),
+    model_router: ModelRouter = Depends(get_model_router),
+    _: None = Depends(rate_limited()),
+) -> dict:
+    """Async chat endpoint for mobile clients. Returns task_id immediately."""
+    await _ensure_member(db, member_id)
+
+    image_data_url = None
+    if file:
+        image_data_url = _file_to_data_url(file)
+
+    _cleanup_async_tasks()
+    task_id = str(uuid.uuid4())
+    _async_chat_tasks[task_id] = {
+        "status": "processing",
+        "reply": "",
+        "report": None,
+        "error": None,
+        "created_at": _time.time(),
+    }
+
+    task = asyncio.create_task(
+        _run_async_chat(task_id, member_id, message, image_data_url)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {"task_id": task_id, "status": "processing"}
+
+
+@router.get("/{member_id}/chat/task/{task_id}")
+async def get_chat_task(
+    member_id: int,
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Poll async chat task status."""
+    await _ensure_member(db, member_id)
+    _cleanup_async_tasks()
+
+    task = _async_chat_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+
+    return {
+        "status": task["status"],
+        "reply": task["reply"],
+        "report": task["report"],
+        "error": task["error"],
+    }

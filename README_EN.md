@@ -1,59 +1,40 @@
 # AI Health Steward
 
-**Your health. Your data. Your AI. — fully self-hosted.**
+[中文文档](README.md)
 
-> Open-source, private, self-hosted family AI health steward. Multimodal AI structures your family's health data into per-person health profiles, with a visual dashboard and AI consultations grounded in real data — deployed on *your* server, never a closed platform.
+> Self-hosted, privacy-first family AI health steward. Multimodal AI structures medical reports and lab results into per-person health profiles, with AI consultation, metric trends, checkup recommendations, risk self-assessment, and more. All data stays on your server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/deploy-Docker%20Compose-2496ed.svg)](DEPLOYMENT.md)
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg)](backend)
-[![React](https://img.shields.io/badge/React-18-61DAFB.svg)](frontend)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](docker-compose.yml)
-[![Online Demo](https://img.shields.io/badge/Online%20Page-online-brightgreen)](https://wangzhengpengjay.github.io/AI-Health-Steward/)
-
-> 📖 **Online page**: [wangzhengpengjay.github.io/AI-Health-Steward](https://wangzhengpengjay.github.io/AI-Health-Steward/) — graphical landing page for features & vision
-
-[中文文档](README.md)
+[![Online Page](https://img.shields.io/badge/Online%20Page-online-brightgreen)](https://wangzhengpengjay.github.io/AI-Health-Steward/)
 
 ---
 
-## Why self-hosted? Privacy is the whole point.
+## Why this project
 
 Most health apps are black boxes: your lab results, diagnoses, and medications get uploaded to someone else's cloud and monetized. **AI Health Steward is the opposite.**
 
-- 🔒 **Your data never leaves your server** — health records, reports, and profiles live entirely on hardware you control. Nothing is uploaded to any cloud automatically.
-- 🏠 **One instance serves your whole family** — multi-member with fully isolated data.
-- 🧠 **Bring your own AI** — plug in any OpenAI-compatible model (GPT-4o, DeepSeek, etc.) *or* run fully offline with a local LLM (e.g. Ollama). When you use a cloud model, only the specific query and image you send go to *your* chosen provider — and you can opt out entirely.
-- 🗄️ **Total data control** — export everything as JSON anytime, or delete records with a soft-delete safety net.
+- **Your data never leaves your server** — health records, reports, and profiles live entirely on hardware you control
+- **One instance serves your whole family** — multi-member with fully isolated data
+- **Bring your own AI** — plug in any OpenAI-compatible model (GPT-4o, DeepSeek, etc.) or run fully offline with a local LLM (Ollama)
+- **Mobile too** — Capacitor iOS/Android apps, pairing code binding, secure public access
 
 > A health record is the most sensitive data you own. It should not be a product. It should live on your shelf.
 
 ---
 
-## Features
+## Core Features
 
-- **Self-hosted & Private** — all health data stays on your local server, fully under your control; optional Bearer-token auth + per-member rate limiting
-- **Multimodal Report Import** — upload photos of medical reports, lab results, or prescriptions; AI extracts structured key metrics with your confirmation
-- **Person-Level Health Profile** — A–H field families (basic info / physiological metrics / diagnoses / medications / allergies / lifestyle / family history / data provenance) as a single source of truth
-- **AI Health Consultation** — intent routing via function calling; answers grounded in your actual profile data — not a generic chatbot
-- **Metric Trend Visualization** — blood pressure, blood glucose, heart rate, weight/BMI trend charts with abnormal markers and clinical **critical-value alerts** (e.g. BP ≥180/110)
-- **Age-Tiered Reference Ranges** — normal ranges auto-matched to adult vs. child to avoid misjudging kids' metrics
-- **Personalized Checkup Recommendations** — 1+X+Y framework (core basics / condition-specific / risk screening), budget tiers, safety/contraindication checks
+- **Multimodal Report Import** — upload photos of medical reports; AI extracts structured key metrics
+- **Person-Level Health Profile** — basic info / physiological metrics / diagnoses / medications / allergies / lifestyle / family history
+- **AI Health Consultation** — answers grounded in your actual profile data, not a generic chatbot
+- **Metric Trend Visualization** — blood pressure / glucose / heart rate / weight trends with abnormal markers and critical-value alerts
+- **Personalized Checkup Recommendations** — 1+X+Y framework for customized checkup plans
+- **Risk Self-Assessment** — 9 built-in scales (PHQ-9 / GAD-7 / diabetes / cardiovascular / insomnia / hypertension / dyslipidemia / AD8 / stroke)
+- **Proactive Health Agent** — scheduled patrol engine, rule + AI dual-layer inference, auto-push health reminders
+- **Follow-up / Medication Reminders** — auto-generated todo tasks based on critical values, abnormal metrics, medications
 - **Periodic Health Summaries** — auto weekly/monthly/yearly reports with trends, anomalies, and follow-up items
-- **Risk Self-Assessment** — built-in 9 scales: PHQ-9 (depression), GAD-7 (anxiety), diabetes risk, ASCVD (cardiovascular), ISI (insomnia), hypertension risk, dyslipidemia, AD8 (cognitive), and stroke risk
-- **Proactive Health Agent** — scheduled patrol engine with rule-based + AI dual-layer inference, auto-pushes personalized health reminders (critical values / weekly abnormal alerts / daily task reminders), generates recheck/medication/follow-up tasks
-- **Follow-up / Medication Reminders** — auto-generated todo tasks (recheck / medication / follow-up / appointment)
-- **Report Management** — full lifecycle (upload → AI extraction → confirm → archive); three upload entry points
-- **Lab & Exam Tracking** — lab metrics grouped by report with per-test charts; exam findings on a category timeline
-- **AI Image Interpretation** — send report images in chat; AI extracts structured data, interprets it, one-click archive
-- **Report Semantic Search (RAG)** — archived reports auto-vectorized for semantic Q&A over your history
-- **Long-Term Conversation Memory** — each consultation rolls into a compressed per-member long-term memory
-- **Feishu / Lark Integration** — multiple bots, one per family member; WebSocket for text Q&A and image parsing (great on mobile)
-- **Dual-Entry Design** — WebUI is the full management backend; Feishu is the lightweight daily entry point; data flows between both automatically
-- **Pluggable Models** — multimodal API / text API / local LLM, configured on demand
-- **Cost Optimization** — eliminates duplicate metric-extraction LLM calls; skips LLM when a summary has no new data
-- **Production Deployment** — built-in `docker-compose.prod.yml` (no hot-reload/polling, DEBUG=false); user data organized by member/year/month
-- **System Settings** — manage models, health checks, data export/wipe from the UI
+- **Feishu / Lark Integration** — multiple bots, one per family member; WebSocket for text Q&A and image parsing
+- **Mobile App** — Capacitor WebView, pairing code binding, secure public network access
 
 ---
 
@@ -65,13 +46,11 @@ Most health apps are black boxes: your lab results, diagnoses, and medications g
 - Model API Key (OpenAI-compatible endpoint, e.g., GPT-4o / DeepSeek)
 - Minimum: 2 CPU cores / 2GB RAM / 10GB disk
 
-### For Home Users (Production, recommended for self-hosting)
-
-Production mode: no hot-reload, idle CPU ≈ 0%, ideal for NAS / mini PC 24/7:
+### Deployment
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/wangzhengpengjay/AI-Health-Steward.git
+git clone https://github.com/zhengpengwangjay/AI-Health-Steward.git
 cd AI-Health-Steward
 
 # 2. Copy environment config and fill in credentials
@@ -85,7 +64,6 @@ cp .env backend/.env
 mkdir -p userdata
 
 # 5. Build and start (production mode)
-#    Database migrations run automatically on startup (no manual alembic needed)
 docker compose -f docker-compose.prod.yml build
 docker compose -f docker-compose.prod.yml up -d
 
@@ -94,32 +72,18 @@ docker compose -f docker-compose.prod.yml up -d
 # API Docs: http://localhost:18000/docs
 ```
 
-### For Developers (Development, hot-reload)
+> Development mode (hot-reload): use `docker compose up -d`. Both modes share the same database and user data.
 
-Development mode: hot-reload + HMR, backend Python auto-reloads, frontend TSX instant update:
+### Mobile Connection
 
-```bash
-# 1-3. Same as above (clone, configure .env, cp to backend/.env, mkdir userdata)
+After deployment, configure public access in the WebUI settings:
 
-# 4. One-command startup (development mode)
-#    Database migrations run automatically on startup (no manual alembic needed)
-docker compose up -d
+1. Open **Settings → Mobile Device Pairing**
+2. Choose a fixed domain scheme (Cloudflare Tunnel / Caddy / Tailscale)
+3. Follow the guided setup to configure a fixed address
+4. Generate a pairing code, enter the address and code in the mobile app
 
-# 5. Access
-# WebUI: http://localhost:5173
-# API Docs: http://localhost:18000/docs
-```
-
-> Both modes share the same database and user data. See [Deployment Guide](DEPLOYMENT.md) for details.
-
-### Quick Trial
-
-```bash
-# Import demo data (optional)
-docker exec health-steward-backend python -m scripts.seed_demo_data
-```
-
-See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
+See the setup guide panel in the settings page for detailed steps.
 
 ---
 
@@ -130,7 +94,7 @@ See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 | Backend | Python 3.12 + FastAPI |
 | Frontend | React 18 + Vite + TypeScript + TailwindCSS |
 | Database | PostgreSQL 16 + pgvector |
-| ORM | SQLAlchemy 2.0 + Alembic |
+| Mobile | Capacitor (iOS / Android) |
 | AI | OpenAI-compatible API (multimodal/text) + Ollama (local LLM) |
 | Deployment | Docker Compose |
 
@@ -142,57 +106,26 @@ See [Deployment Guide](DEPLOYMENT.md) for detailed instructions.
 AI-Health-Steward/
 ├── backend/                 # Python FastAPI backend
 │   ├── app/
-│   │   ├── api/routes/      # API routes (members/metrics/chat/reports/checkup/profile/settings/feishu/scales/tasks/summaries)
-│   │   ├── core/            # Config, database, auth/rate-limit, reference ranges, utilities
-│   │   ├── models/          # SQLAlchemy models (family/health/feishu/assessments/tasks/summaries)
-│   │   ├── schemas/         # Pydantic schemas
-│   │   ├── services/        # Business logic (consultation/extraction/checkup/feishu/memory/tasks/summaries/file_storage)
-│   │   │   └── tools/       # AI tools (function calling: query/extract/assess)
+│   │   ├── api/routes/      # API routes (members/metrics/chat/reports/checkup/profile/settings/feishu/scales/tasks/summaries/pairing)
+│   │   ├── core/            # Config, database, auth/rate-limit, security
+│   │   ├── models/          # SQLAlchemy models (family/health/feishu/assessments/tasks/summaries/paired_devices)
+│   │   ├── services/        # Business logic (consultation/extraction/checkup/feishu/memory/tasks/summaries/patrol_engine)
+│   │   │   └── tools/       # AI tools (function calling)
 │   │   ├── prompts/         # AI prompt templates
 │   │   └── providers/       # Model provider abstraction (multimodal/text/local/embedding)
-│   ├── alembic/             # Database migrations (17 versions)
-│   └── tests/               # Unit tests (120+)
-├── frontend/                # React frontend
+│   ├── alembic/             # Database migrations
+│   └── tests/               # Unit tests
+├── frontend/                # React frontend (WebUI)
 │   └── src/
-│       ├── components/      # UI components (layout/sidebar/member-switcher/chat-bubble/report-confirm/metric-views)
-│       ├── pages/           # Pages (home/dashboard/chat/reports/checkup/members/metrics/settings/assess/summaries)
-│       ├── stores/          # Zustand state management (member/chat)
-│       ├── lib/             # API client
-│       └── types/           # TypeScript types
-├── docs/screenshots/        # Project screenshots
+│       ├── components/      # UI components
+│       ├── pages/           # Pages
+│       ├── stores/          # Zustand state management
+│       └── lib/             # API client
 ├── docker-compose.yml       # Development deployment (hot-reload)
-├── docker-compose.prod.yml  # Production deployment (no hot-reload/polling)
+├── docker-compose.prod.yml  # Production deployment (no hot-reload)
 ├── .env.example             # Environment variable template
 └── README.md
 ```
-
----
-
-## Roadmap
-
-| Version | Goal | Status |
-|---------|------|--------|
-| V0.1 | Project scaffold & data foundation | ✅ Done |
-| V0.2 | AI consultation — intent routing, tool calling, chat UI | ✅ Done |
-| V0.3 | Report import & visualization — multimodal extraction, trends, dashboard, report management, checkup recommendations, RAG | ✅ Done |
-| V0.4 | Feishu channel — multi-channel management, data collection, lightweight Q&A | ✅ Done |
-| V1.0 | Open-source release — docs, one-click deploy, hardening (age-tiered ranges / critical-value alerts / family overview / long-term memory / auth & rate limiting) | ✅ Done |
-| V1.1 | Three new features — follow-up/medication reminders, periodic health summaries, risk self-assessment (9 scales) | ✅ Done |
-| V1.2 | Code quality optimization — 12 items (SSE blocking fix, transaction optimization, JSON cleaning, dedup, pagination, etc.) | ✅ Done |
-| V1.3 | Visit Preparation — chief complaint-driven department recommendation, AI-generated checklist, floating panel, PDF export | ✅ Done |
-| V1.4 | Proactive Health Agent — scheduled patrol engine, rule+AI dual-layer inference, proactive push, task generation | ✅ Done |
-
----
-
-## Screenshots
-
-> Screenshots below use sample data. Real names are anonymized to protect privacy.
-
-![Health Dashboard](docs/screenshots/02-dashboard.jpg)
-
-![AI Chat Consultation](docs/screenshots/03-chat.jpg)
-
-![Metric Management](docs/screenshots/09-metric-input.jpg)
 
 ---
 
@@ -200,9 +133,9 @@ AI-Health-Steward/
 
 - **Data Storage**: All health data is stored on your local server — nothing is uploaded to the cloud automatically
 - **Model API Calls**: Conversation content and report images are sent to your configured model API provider. For fully offline operation, configure a local LLM (e.g., Ollama)
-- **Data Control**: Users can view, modify, export, or delete all data at any time
-
-See [Privacy Statement](PRIVACY.md) for details.
+- **Data Export**: Users can export all health data (JSON format) anytime
+- **Data Deletion**: Supports single-record deletion and full-member deletion (soft delete, hard delete after 30 days)
+- **Mobile Pairing**: Pairing tokens stored in iOS Keychain / Android Keystore, never uploaded to any third party
 
 ---
 
@@ -213,9 +146,8 @@ Issues and PRs are welcome! Please read the [Contributing Guide](CONTRIBUTING.md
 ## Documentation
 
 - [Deployment Guide](DEPLOYMENT.md) — Docker setup, configuration, Feishu bot setup
-- [Developer Guide](DEVELOPMENT.md) — Architecture, extension guides (Provider / Tools / Channels)
+- [Developer Guide](DEVELOPMENT.md) — Architecture, extension guides
 - [Privacy Statement](PRIVACY.md) — Data storage and model API boundaries
-- [Contributing Guide](CONTRIBUTING.md) — Dev environment and code conventions
 
 ## License
 

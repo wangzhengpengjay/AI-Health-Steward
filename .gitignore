@@ -22,6 +22,11 @@ frontend/.vite/
 .env
 .env.local
 .env.*.local
+.env.mobile
+
+# Cloudflare Tunnel credentials
+.cloudflared/
+cloudflared/
 
 # IDE
 .vscode/
